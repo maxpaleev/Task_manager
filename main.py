@@ -3,7 +3,7 @@ import sys
 import io
 
 from PyQt6 import uic
-from PyQt6.QtWidgets import QApplication, QMainWindow
+from PyQt6.QtWidgets import QApplication, QMainWindow, QMessageBox
 
 
 class SimplePlanner(QMainWindow):
@@ -16,19 +16,23 @@ class SimplePlanner(QMainWindow):
 
     def add(self):
         if self.lineEdit.text():
-            t = datetime(self.calendarWidget.selectedDate().year(), self.calendarWidget.selectedDate().month(),
+            event_date = datetime(self.calendarWidget.selectedDate().year(), self.calendarWidget.selectedDate().month(),
                          self.calendarWidget.selectedDate().day(), self.timeStart.time().hour(),
                          self.timeStart.time().minute())
+            event_start = time(hour=self.timeStart.time().hour(), minute=self.timeStart.time().minute())
             event_end = time(hour=self.timeEnd.time().hour(), minute=self.timeEnd.time().minute())
 
-            my_event = [t, event_end, self.lineEdit.text()]
-            self.events.append(my_event)
+            if event_end < event_start:
+                QMessageBox(self).critical(self, "Ошибка", "Время окончания события не может быть раньше времени начала")
+            else:
+                my_event = [event_date, event_end, self.lineEdit.text()]
+                self.events.append(my_event)
 
-            self.events = sorted(self.events, key=lambda x: x[0])
-            self.eventList.clear()
+                self.events = sorted(self.events, key=lambda x: x[0])
+                self.eventList.clear()
 
-            for i in self.events:
-                self.eventList.addItem(i[0].strftime("%d.%m.%Y %H:%M") + " - " + i[1].strftime("%H:%M") + " : " + i[2])
+                for i in self.events:
+                    self.eventList.addItem(i[0].strftime("%d.%m.%Y %H:%M") + " - " + i[1].strftime("%H:%M") + " : " + i[2])
 
 
 if __name__ == '__main__':
