@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>793</width>
-    <height>532</height>
+    <width>784</width>
+    <height>474</height>
    </rect>
   </property>
   <property name="sizePolicy">
@@ -33,7 +33,32 @@
     <item>
      <layout class="QVBoxLayout" name="verticalLayout">
       <item>
-       <widget class="QTimeEdit" name="timeEdit"/>
+       <layout class="QHBoxLayout" name="horizontalLayout_3">
+        <item>
+         <widget class="QLabel" name="label">
+          <property name="text">
+           <string>Начало события</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QTimeEdit" name="timeStart"/>
+        </item>
+       </layout>
+      </item>
+      <item>
+       <layout class="QHBoxLayout" name="horizontalLayout_4">
+        <item>
+         <widget class="QLabel" name="label_2">
+          <property name="text">
+           <string>Конец события</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QTimeEdit" name="timeEnd"/>
+        </item>
+       </layout>
       </item>
       <item>
        <widget class="QCalendarWidget" name="calendarWidget"/>
@@ -63,8 +88,8 @@
     <rect>
      <x>0</x>
      <y>0</y>
-     <width>793</width>
-     <height>26</height>
+     <width>784</width>
+     <height>21</height>
     </rect>
    </property>
   </widget>

@@ -1,22 +1,9 @@
-import datetime
+from datetime import datetime, date, time
 import sys
 import io
 
 from PyQt6 import uic
 from PyQt6.QtWidgets import QApplication, QMainWindow
-
-
-
-class DiaryEvent():
-    def __init__(self, datetime, title):
-        self.datetime = datetime
-        self.title = title
-
-    def to_str(self):
-        return "{} - {}".format(self.datetime, self.title)
-
-    def __str__(self):
-        return self.to_str()
 
 
 class SimplePlanner(QMainWindow):
@@ -29,17 +16,19 @@ class SimplePlanner(QMainWindow):
 
     def add(self):
         if self.lineEdit.text():
-            t = datetime.datetime(self.calendarWidget.selectedDate().year(), self.calendarWidget.selectedDate().month(),
-                                  self.calendarWidget.selectedDate().day(), self.timeEdit.time().hour(),
-                                  self.timeEdit.time().minute())
+            t = datetime(self.calendarWidget.selectedDate().year(), self.calendarWidget.selectedDate().month(),
+                         self.calendarWidget.selectedDate().day(), self.timeStart.time().hour(),
+                         self.timeStart.time().minute())
+            event_end = time(hour=self.timeEnd.time().hour(), minute=self.timeEnd.time().minute())
 
-            my_event = DiaryEvent(t, self.lineEdit.text())
+            my_event = [t, event_end, self.lineEdit.text()]
             self.events.append(my_event)
 
-            self.events = sorted(self.events, key=lambda x: x.datetime)
+            self.events = sorted(self.events, key=lambda x: x[0])
             self.eventList.clear()
 
-            self.eventList.addItems([i.to_str() for i in self.events])
+            for i in self.events:
+                self.eventList.addItem(i[0].strftime("%d.%m.%Y %H:%M") + " - " + i[1].strftime("%H:%M") + " : " + i[2])
 
 
 if __name__ == '__main__':
