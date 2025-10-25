@@ -64,7 +64,7 @@
        <widget class="QCalendarWidget" name="calendarWidget"/>
       </item>
       <item>
-       <widget class="QLineEdit" name="lineEdit"/>
+       <widget class="QLineEdit" name="eventName"/>
       </item>
       <item>
        <widget class="QPushButton" name="addEventBtn">
