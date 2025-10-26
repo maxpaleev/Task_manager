@@ -119,7 +119,13 @@
         </layout>
        </item>
        <item>
-        <widget class="QListWidget" name="eventList"/>
+        <widget class="QTreeWidget" name="eventList">
+         <column>
+          <property name="text">
+           <string notr="true">1</string>
+          </property>
+         </column>
+        </widget>
        </item>
       </layout>
      </widget>
