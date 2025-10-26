@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>786</width>
-    <height>522</height>
+    <width>1224</width>
+    <height>677</height>
    </rect>
   </property>
   <property name="sizePolicy">
@@ -34,9 +34,15 @@
      <rect>
       <x>0</x>
       <y>0</y>
-      <width>781</width>
-      <height>501</height>
+      <width>1221</width>
+      <height>651</height>
      </rect>
+    </property>
+    <property name="sizePolicy">
+     <sizepolicy hsizetype="Maximum" vsizetype="Maximum">
+      <horstretch>0</horstretch>
+      <verstretch>0</verstretch>
+     </sizepolicy>
     </property>
     <property name="minimumSize">
      <size>
@@ -46,18 +52,18 @@
     </property>
     <property name="maximumSize">
      <size>
-      <width>781</width>
-      <height>501</height>
+      <width>16777215</width>
+      <height>10000000</height>
      </size>
     </property>
     <property name="currentIndex">
-     <number>0</number>
+     <number>1</number>
     </property>
     <widget class="QWidget" name="Events">
      <property name="maximumSize">
       <size>
-       <width>775</width>
-       <height>475</height>
+       <width>100000</width>
+       <height>100000</height>
       </size>
      </property>
      <attribute name="title">
@@ -68,8 +74,8 @@
        <rect>
         <x>0</x>
         <y>0</y>
-        <width>771</width>
-        <height>471</height>
+        <width>1211</width>
+        <height>621</height>
        </rect>
       </property>
       <layout class="QHBoxLayout" name="horizontalLayout_4">
@@ -137,10 +143,10 @@
      <widget class="QWidget" name="horizontalLayoutWidget_7">
       <property name="geometry">
        <rect>
-        <x>40</x>
-        <y>50</y>
-        <width>711</width>
-        <height>371</height>
+        <x>0</x>
+        <y>0</y>
+        <width>1211</width>
+        <height>621</height>
        </rect>
       </property>
       <layout class="QHBoxLayout" name="horizontalLayout_7">
@@ -171,7 +177,7 @@
           </widget>
          </item>
          <item>
-          <widget class="QTextEdit" name="textDes">
+          <widget class="QTextEdit" name="taskDes">
            <property name="minimumSize">
             <size>
              <width>262</width>
@@ -198,24 +204,43 @@
            <item>
             <layout class="QHBoxLayout" name="horizontalLayout_6">
              <item>
-              <widget class="QRadioButton" name="Very">
+              <widget class="QRadioButton" name="UaI">
                <property name="text">
-                <string>Важно</string>
+                <string>Срочно и важно</string>
                </property>
+               <attribute name="buttonGroup">
+                <string notr="true">importanceChoice</string>
+               </attribute>
               </widget>
              </item>
              <item>
-              <widget class="QRadioButton" name="Medium">
+              <widget class="QRadioButton" name="IbnU">
                <property name="text">
-                <string>Сренде</string>
+                <string>Важно, но не срочно</string>
                </property>
+               <attribute name="buttonGroup">
+                <string notr="true">importanceChoice</string>
+               </attribute>
               </widget>
              </item>
              <item>
-              <widget class="QRadioButton" name="Light">
+              <widget class="QRadioButton" name="UbnI">
                <property name="text">
-                <string>Не важно</string>
+                <string>Срочно, но не важно</string>
                </property>
+               <attribute name="buttonGroup">
+                <string notr="true">importanceChoice</string>
+               </attribute>
+              </widget>
+             </item>
+             <item>
+              <widget class="QRadioButton" name="NunI">
+               <property name="text">
+                <string>Не срочно и не важно</string>
+               </property>
+               <attribute name="buttonGroup">
+                <string notr="true">importanceChoice</string>
+               </attribute>
               </widget>
              </item>
             </layout>
@@ -233,6 +258,9 @@
        </item>
        <item>
         <widget class="QTreeWidget" name="taskList">
+         <property name="enabled">
+          <bool>true</bool>
+         </property>
          <column>
           <property name="text">
            <string notr="true">1</string>
@@ -249,4 +277,7 @@
  </widget>
  <resources/>
  <connections/>
+ <buttongroups>
+  <buttongroup name="importanceChoice"/>
+ </buttongroups>
 </ui>
