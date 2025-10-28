@@ -2,8 +2,8 @@ from datetime import datetime, time
 import sys
 
 from PyQt6 import uic
-from PyQt6.QtCore import QTime
-from PyQt6.QtWidgets import QApplication, QMainWindow, QMessageBox, QTreeWidgetItem
+from PyQt6.QtCore import QTime, Qt
+from PyQt6.QtWidgets import QApplication, QMainWindow, QMessageBox, QTreeWidgetItem, QTreeWidget, QMenu
 
 
 class SimplePlanner(QMainWindow):
@@ -23,6 +23,8 @@ class SimplePlanner(QMainWindow):
         self.data = {}
         self.eventList.setColumnCount(2)
         self.eventList.setHeaderLabels(["Событие", "Время"])
+        self.eventList.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.eventList.customContextMenuRequested.connect(self.event_context_menu)
 
         self.tasks = {"Срочно и важно": [], "Важно, но не срочно": [], "Срочно, но не важно": [],
                       'Не срочно и не важно': []}
@@ -67,7 +69,38 @@ class SimplePlanner(QMainWindow):
                 child = QTreeWidgetItem([name, time_str])
                 item.addChild(child)
             items.append(item)
+        print(self.data)
         self.eventList.insertTopLevelItems(0, items)
+
+    def event_context_menu(self, position):
+        item = self.eventList.itemAt(position)
+        menu = QMenu(self)
+
+        action_del = menu.addAction("Удалить")
+        action_redact = menu.addAction("Редактировать")
+
+        if not item.parent():
+            action_del.setEnabled(True)
+            action_redact.setEnabled(False)
+
+        action = menu.exec(self.eventList.mapToGlobal(position))
+        if action == action_del and not item.parent():
+            key = datetime.strptime(item.text(0), "%d.%m.%Y")
+            del self.data[key]
+            self.update_event_list()
+        elif action == action_del and item.parent():
+            key = datetime.strptime(item.parent().text(0), "%d.%m.%Y")
+            date = self.data[key]
+            print(date)
+            for i in date:
+                if i[0] == item.text(0):
+                    date.remove(i)
+                    self.update_event_list()
+                    break
+
+
+        elif action == action_redact:
+            print("Edit")
 
     def get_importance(self, button):
         self.importance = button.text()
