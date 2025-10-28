@@ -69,8 +69,23 @@ class SimplePlanner(QMainWindow):
                 child = QTreeWidgetItem([name, time_str])
                 item.addChild(child)
             items.append(item)
-        print(self.data)
         self.eventList.insertTopLevelItems(0, items)
+
+    def delete_event(self, item):
+        print(item.text(0))
+        print(item.parent())
+        if not item.parent():
+            key = datetime.strptime(item.text(0), "%d.%m.%Y")
+            del self.data[key]
+            self.update_event_list()
+        elif item.parent():
+            key = datetime.strptime(item.parent().text(0), "%d.%m.%Y")
+            date = self.data[key]
+            for i in date:
+                if i[0] == item.text(0):
+                    date.remove(i)
+                    self.update_event_list()
+                    break
 
     def event_context_menu(self, position):
         item = self.eventList.itemAt(position)
@@ -84,21 +99,9 @@ class SimplePlanner(QMainWindow):
             action_redact.setEnabled(False)
 
         action = menu.exec(self.eventList.mapToGlobal(position))
-        if action == action_del and not item.parent():
-            key = datetime.strptime(item.text(0), "%d.%m.%Y")
-            del self.data[key]
-            self.update_event_list()
-        elif action == action_del and item.parent():
-            key = datetime.strptime(item.parent().text(0), "%d.%m.%Y")
-            date = self.data[key]
-            print(date)
-            for i in date:
-                if i[0] == item.text(0):
-                    date.remove(i)
-                    self.update_event_list()
-                    break
 
-
+        if action == action_del:
+            self.delete_event(item)
         elif action == action_redact:
             print("Edit")
 
