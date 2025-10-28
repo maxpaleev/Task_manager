@@ -49,6 +49,8 @@ class SimplePlanner(QMainWindow):
         # Настройка QTreeWidget для задач
         self.taskList.setColumnCount(2)
         self.taskList.setHeaderLabels(["Название", "Описание"])
+        self.taskList.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.taskList.customContextMenuRequested.connect(self.task_context_menu)
 
     # ===================================================================
     # 				ЛОГИКА СОБЫТИЙ (Events)
@@ -159,7 +161,6 @@ class SimplePlanner(QMainWindow):
     # ===================================================================
     # 				ЛОГИКА ЗАДАЧ (Tasks)
     # ===================================================================
-
     def get_importance(self, button):
         """Получение категории важности из QButtonGroup (радиокнопки)."""
         self.importance = button.text()
@@ -168,16 +169,12 @@ class SimplePlanner(QMainWindow):
         """Добавление новой задачи."""
         task_name = self.taskName.text()
         task_desc = self.taskDes.text()
-
         if not task_name:
             QMessageBox.warning(self, "Ошибка", "Введите название задачи")
             return
-
         self.tasks[self.importance].append((task_name, task_desc))
-
         self.taskName.clear()
         self.taskDes.clear()
-
         self.update_task_list()
 
     def update_task_list(self):
@@ -186,16 +183,64 @@ class SimplePlanner(QMainWindow):
         items = []
         for category in self.TASK_CATEGORIES:
             tasks = self.tasks[category]
-            if not tasks:  # Не показываем пустые категории
+            if not tasks:
                 continue
 
             item = QTreeWidgetItem([category])
-            for task in tasks:
-                name, desc = task
+            item.setData(0, Qt.ItemDataRole.UserRole, category)
+
+            for task_tuple in tasks:
+                name, desc = task_tuple
                 child = QTreeWidgetItem([name, desc])
+                child.setData(0, Qt.ItemDataRole.UserRole, task_tuple)
                 item.addChild(child)
             items.append(item)
         self.taskList.insertTopLevelItems(0, items)
+
+    def delete_task(self, item):
+        """Удаление задачи или очистка категории."""
+        if not item.parent():
+            category_name = item.data(0, Qt.ItemDataRole.UserRole)
+            if category_name in self.tasks:
+                self.tasks[category_name].clear()
+        elif item.parent():
+
+            category_name = item.parent().data(0, Qt.ItemDataRole.UserRole)
+            task_data = item.data(0, Qt.ItemDataRole.UserRole)
+            if category_name in self.tasks and task_data in self.tasks[category_name]:
+                self.tasks[category_name].remove(task_data)
+        self.update_task_list()
+
+    def edit_task(self, item):
+        """Редактирование задачи (заполняет поля для нового ввода)."""
+
+        category_name = item.parent().data(0, Qt.ItemDataRole.UserRole)
+        task_data = item.data(0, Qt.ItemDataRole.UserRole)
+        name, desc = task_data
+        self.delete_task(item)
+
+        self.taskName.setText(name)
+        self.taskDes.setText(desc)
+        self.importance = category_name
+        for button in self.importanceChoice.buttons():
+            if button.text() == category_name:
+                button.setChecked(True)
+                break
+
+    def task_context_menu(self, position):
+        item = self.taskList.itemAt(position)
+        if not item:
+            return
+        menu = QMenu(self)
+        action_del = menu.addAction("Удалить")
+        action_edit = menu.addAction("Редактировать")
+        if not item.parent():
+            action_edit.setEnabled(False)
+        action = menu.exec(self.taskList.viewport().mapToGlobal(position))
+        if action == action_del:
+            self.delete_task(item)
+        elif action == action_edit:
+            self.edit_task(item)
 
 
 if __name__ == '__main__':
