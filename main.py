@@ -24,13 +24,12 @@ class SimplePlanner(QMainWindow):
         self.eventList.setColumnCount(2)
         self.eventList.setHeaderLabels(["Событие", "Время"])
 
-        self.tasks = {"Срочно и важно": [], "Важно, но не срочно": [], "Срочно, но не важно": [], 'Не срочно и не важно': []}
+        self.tasks = {"Срочно и важно": [], "Важно, но не срочно": [], "Срочно, но не важно": [],
+                      'Не срочно и не важно': []}
+        self.taskDes.setMaxLength(100)
         self.importanceChoice.buttonClicked.connect(self.get_importance)
         self.taskList.setColumnCount(2)
         self.taskList.setHeaderLabels(["Название", "Описание"])
-
-        # Инициализация значения важности
-        self.importance = "Не важно"
 
     def event_add(self):
         if not self.eventName.text():
@@ -75,14 +74,13 @@ class SimplePlanner(QMainWindow):
 
     def task_add(self):
         task_name = self.taskName.text()
-        task_desc = self.taskDes.toPlainText()
+        task_desc = self.taskDes.text()
 
         if not task_name:
             QMessageBox.warning(self, "Ошибка", "Введите название задачи")
             return
 
         self.tasks[self.importance].append((task_name, task_desc))
-        print(self.tasks)
 
         self.taskName.clear()
         self.taskDes.clear()
