@@ -1,9 +1,8 @@
-from datetime import datetime, time
 import sys
 
 from PyQt6 import uic
-from PyQt6.QtCore import QTime, Qt, QDate
-from PyQt6.QtWidgets import QApplication, QMainWindow, QMessageBox, QTreeWidgetItem, QTreeWidget, QMenu
+from PyQt6.QtCore import Qt, QDate, QTime
+from PyQt6.QtWidgets import QApplication, QMainWindow, QMessageBox, QTreeWidgetItem, QMenu
 
 
 class SimplePlanner(QMainWindow):
@@ -17,19 +16,30 @@ class SimplePlanner(QMainWindow):
 
         self.setWindowTitle('Минипланировщик')
 
-        self.addEventBtn.clicked.connect(self.event_add)
-        self.taskButton.clicked.connect(self.task_add)
+        # --- Категории задач---
+        self.TASK_CATEGORIES = [
+            "Срочно и важно",
+            "Важно, но не срочно",
+            "Срочно, но не важно",
+            'Не срочно и не важно'
+        ]
 
+        # --- События ---
         self.data = {}
+        self.addEventBtn.clicked.connect(self.event_add)
         self.eventList.setColumnCount(2)
         self.eventList.setHeaderLabels(["Событие", "Время"])
         self.eventList.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.eventList.customContextMenuRequested.connect(self.event_context_menu)
 
-        self.tasks = {"Срочно и важно": [], "Важно, но не срочно": [], "Срочно, но не важно": [],
-                      'Не срочно и не важно': []}
+        # --- Задачи ---
+        self.tasks = {category: [] for category in self.TASK_CATEGORIES}
+        self.importance = self.TASK_CATEGORIES[0]
+
+        self.taskButton.clicked.connect(self.task_add)
         self.taskDes.setMaxLength(100)
         self.importanceChoice.buttonClicked.connect(self.get_importance)
+
         self.taskList.setColumnCount(2)
         self.taskList.setHeaderLabels(["Название", "Описание"])
 
@@ -38,19 +48,21 @@ class SimplePlanner(QMainWindow):
             QMessageBox.warning(self, "Предупреждение", "Введите название события")
             return
 
-        selected_date = self.calendarWidget.selectedDate()
-        event_day = datetime(selected_date.year(), selected_date.month(), selected_date.day())
-        event_start = time(hour=self.timeStart.time().hour(), minute=self.timeStart.time().minute())
-        event_end = time(hour=self.timeEnd.time().hour(), minute=self.timeEnd.time().minute())
+        event_day = self.calendarWidget.selectedDate().toPyDate()
+        event_start = self.timeStart.time().toPyTime()
+        event_end = self.timeEnd.time().toPyTime()
 
         if event_end < event_start:
             QMessageBox.warning(self, "Ошибка", "Время окончания события не может быть раньше времени начала")
             return
 
+        event_tuple = (self.eventName.text(), event_start, event_end)
+
         if event_day in self.data:
-            self.data[event_day].append((self.eventName.text(), event_start, event_end))
+            if event_tuple not in self.data[event_day]:
+                self.data[event_day].append(event_tuple)
         else:
-            self.data[event_day] = [(self.eventName.text(), event_start, event_end)]
+            self.data[event_day] = [event_tuple]
 
         self.eventName.clear()
         self.timeStart.setTime(QTime(0, 0))
@@ -61,57 +73,63 @@ class SimplePlanner(QMainWindow):
     def update_event_list(self):
         self.eventList.clear()
         items = []
-        for key, values in sorted(self.data.items(), key=lambda x: x[0]):
-            item = QTreeWidgetItem([key.strftime("%d.%m.%Y")])
-            for value in sorted(values, key=lambda x: x[1]):
-                name = value[0]
-                time_str = f"{value[1].strftime('%H:%M')} - {value[2].strftime('%H:%M')}"
+        for key_date, values in sorted(self.data.items(), key=lambda x: x[0]):
+            item = QTreeWidgetItem([key_date.strftime("%d.%m.%Y")])
+            item.setData(0, Qt.ItemDataRole.UserRole, key_date)
+
+            for value_tuple in sorted(values, key=lambda x: x[1]):
+                name = value_tuple[0]
+                time_str = f"{value_tuple[1].strftime('%H:%M')} - {value_tuple[2].strftime('%H:%M')}"
                 child = QTreeWidgetItem([name, time_str])
+                child.setData(0, Qt.ItemDataRole.UserRole, value_tuple)
                 item.addChild(child)
             items.append(item)
         self.eventList.insertTopLevelItems(0, items)
 
     def delete_event(self, item):
         if not item.parent():
-            key = datetime.strptime(item.text(0), "%d.%m.%Y")
-            del self.data[key]
-            self.update_event_list()
+            key = item.data(0, Qt.ItemDataRole.UserRole)
+            if key in self.data:
+                del self.data[key]
         elif item.parent():
-            key = datetime.strptime(item.parent().text(0), "%d.%m.%Y")
-            date = self.data[key]
-            for i in date:
-                if i[0] == item.text(0):
-                    date.remove(i)
-                    self.update_event_list()
-                    break
+            key = item.parent().data(0, Qt.ItemDataRole.UserRole)
+            event_data = item.data(0, Qt.ItemDataRole.UserRole)
+
+            if key in self.data and event_data in self.data[key]:
+                self.data[key].remove(event_data)
+                if not self.data[key]:
+                    del self.data[key]
+
+        self.update_event_list()
 
     def edit_event(self, item):
-        event_day = datetime.strptime(item.parent().text(0), "%d.%m.%Y")
-        event_start = time(hour=int(item.text(1).split('-')[0].split(':')[0]),
-                           minute=int(item.text(1).split('-')[0].split(':')[1]))
-        event_end = time(hour=int(item.text(1).split('-')[1].split(':')[0]),
-                         minute=int(item.text(1).split('-')[1].split(':')[1]))
-        event_name = item.text(0)
+
+        event_day_date = item.parent().data(0, Qt.ItemDataRole.UserRole)
+
+        event_data = item.data(0, Qt.ItemDataRole.UserRole)
+        event_name, event_start, event_end = event_data
 
         self.delete_event(item)
 
         self.timeStart.setTime(QTime(event_start.hour, event_start.minute))
         self.timeEnd.setTime(QTime(event_end.hour, event_end.minute))
-        self.calendarWidget.setSelectedDate(QDate(event_day.year, event_day.month, event_day.day))
+        self.calendarWidget.setSelectedDate(QDate(event_day_date.year, event_day_date.month, event_day_date.day))
         self.eventName.setText(event_name)
 
     def event_context_menu(self, position):
         item = self.eventList.itemAt(position)
-        menu = QMenu(self)
 
+        if not item:
+            return
+
+        menu = QMenu(self)
         action_del = menu.addAction("Удалить")
         action_edit = menu.addAction("Редактировать")
 
         if not item.parent():
-            action_del.setEnabled(True)
             action_edit.setEnabled(False)
 
-        action = menu.exec(self.eventList.mapToGlobal(position))
+        action = menu.exec(self.eventList.viewport().mapToGlobal(position))
 
         if action == action_del:
             self.delete_event(item)
@@ -139,7 +157,11 @@ class SimplePlanner(QMainWindow):
     def update_task_list(self):
         self.taskList.clear()
         items = []
-        for category, tasks in self.tasks.items():
+        for category in self.TASK_CATEGORIES:
+            tasks = self.tasks[category]
+            if not tasks:
+                continue
+
             item = QTreeWidgetItem([category])
             for task in tasks:
                 name, desc = task
