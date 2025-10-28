@@ -2,7 +2,7 @@ from datetime import datetime, time
 import sys
 
 from PyQt6 import uic
-from PyQt6.QtCore import QTime, Qt
+from PyQt6.QtCore import QTime, Qt, QDate
 from PyQt6.QtWidgets import QApplication, QMainWindow, QMessageBox, QTreeWidgetItem, QTreeWidget, QMenu
 
 
@@ -72,8 +72,6 @@ class SimplePlanner(QMainWindow):
         self.eventList.insertTopLevelItems(0, items)
 
     def delete_event(self, item):
-        print(item.text(0))
-        print(item.parent())
         if not item.parent():
             key = datetime.strptime(item.text(0), "%d.%m.%Y")
             del self.data[key]
@@ -87,23 +85,38 @@ class SimplePlanner(QMainWindow):
                     self.update_event_list()
                     break
 
+    def edit_event(self, item):
+        event_day = datetime.strptime(item.parent().text(0), "%d.%m.%Y")
+        event_start = time(hour=int(item.text(1).split('-')[0].split(':')[0]),
+                           minute=int(item.text(1).split('-')[0].split(':')[1]))
+        event_end = time(hour=int(item.text(1).split('-')[1].split(':')[0]),
+                         minute=int(item.text(1).split('-')[1].split(':')[1]))
+        event_name = item.text(0)
+
+        self.delete_event(item)
+
+        self.timeStart.setTime(QTime(event_start.hour, event_start.minute))
+        self.timeEnd.setTime(QTime(event_end.hour, event_end.minute))
+        self.calendarWidget.setSelectedDate(QDate(event_day.year, event_day.month, event_day.day))
+        self.eventName.setText(event_name)
+
     def event_context_menu(self, position):
         item = self.eventList.itemAt(position)
         menu = QMenu(self)
 
         action_del = menu.addAction("Удалить")
-        action_redact = menu.addAction("Редактировать")
+        action_edit = menu.addAction("Редактировать")
 
         if not item.parent():
             action_del.setEnabled(True)
-            action_redact.setEnabled(False)
+            action_edit.setEnabled(False)
 
         action = menu.exec(self.eventList.mapToGlobal(position))
 
         if action == action_del:
             self.delete_event(item)
-        elif action == action_redact:
-            print("Edit")
+        elif action == action_edit:
+            self.edit_event(item)
 
     def get_importance(self, button):
         self.importance = button.text()
