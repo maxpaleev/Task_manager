@@ -35,7 +35,7 @@ class SimplePlanner(QMainWindow):
         self.eventList.setHeaderLabels(["Событие", "Время"])
         # Включаем политику кастомного меню, чтобы работал правый клик
         self.eventList.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.eventList.customContextMenuRequested.connect(self.event_context_menu)
+        self.eventList.customContextMenuRequested.connect(lambda pos: self.show_context_menu(self.eventList, pos))
 
         # --- Инициализация Задач ---
         self.tasks = {category: [] for category in self.TASK_CATEGORIES}
@@ -50,7 +50,45 @@ class SimplePlanner(QMainWindow):
         self.taskList.setColumnCount(2)
         self.taskList.setHeaderLabels(["Название", "Описание"])
         self.taskList.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.taskList.customContextMenuRequested.connect(self.task_context_menu)
+        self.taskList.customContextMenuRequested.connect(lambda pos: self.show_context_menu(self.taskList, pos))
+
+    # ===================================================================
+    # 				ЛОГИКА КОНТЕКСТНОГО МЕНЮ (context_menu)
+    # ===================================================================
+    def show_context_menu(self, tree_widget, position):
+        item = tree_widget.itemAt(position)
+        if not item:
+            return
+
+        menu = QMenu(self)
+
+        action_del = menu.addAction("Удалить")
+        action_edit = menu.addAction("Редактировать")
+        action_expand = menu.addAction("Раскрыть все")
+        action_collapse = menu.addAction("Свернуть все")
+
+        if not item.parent():
+            action_edit.setEnabled(False)
+
+        action = menu.exec(tree_widget.viewport().mapToGlobal(position))
+
+        if action == action_del:
+            if tree_widget is self.eventList:
+                self.delete_event(item)
+            elif tree_widget is self.taskList:
+                self.delete_task(item)
+
+        elif action == action_edit:
+            if tree_widget is self.eventList:
+                self.edit_event(item)
+            elif tree_widget is self.taskList:
+                self.edit_task(item)
+
+        elif action == action_expand:
+            tree_widget.expandAll()
+
+        elif action == action_collapse:
+            tree_widget.collapseAll()
 
     # ===================================================================
     # 				ЛОГИКА СОБЫТИЙ (Events)
@@ -138,26 +176,6 @@ class SimplePlanner(QMainWindow):
         self.calendarWidget.setSelectedDate(QDate(event_day_date.year, event_day_date.month, event_day_date.day))
         self.eventName.setText(event_name)
 
-    def event_context_menu(self, position):
-        item = self.eventList.itemAt(position)
-
-        if not item:
-            return
-
-        menu = QMenu(self)
-        action_del = menu.addAction("Удалить")
-        action_edit = menu.addAction("Редактировать")
-
-        if not item.parent():
-            action_edit.setEnabled(False)
-
-        action = menu.exec(self.eventList.viewport().mapToGlobal(position))
-
-        if action == action_del:
-            self.delete_event(item)
-        elif action == action_edit:
-            self.edit_event(item)
-
     # ==================================================================
     # 				ЛОГИКА ЗАДАЧ (Tasks)
     # ==================================================================
@@ -226,21 +244,6 @@ class SimplePlanner(QMainWindow):
             if button.text() == category_name:
                 button.setChecked(True)
                 break
-
-    def task_context_menu(self, position):
-        item = self.taskList.itemAt(position)
-        if not item:
-            return
-        menu = QMenu(self)
-        action_del = menu.addAction("Удалить")
-        action_edit = menu.addAction("Редактировать")
-        if not item.parent():
-            action_edit.setEnabled(False)
-        action = menu.exec(self.taskList.viewport().mapToGlobal(position))
-        if action == action_del:
-            self.delete_task(item)
-        elif action == action_edit:
-            self.edit_task(item)
 
 
 if __name__ == '__main__':
