@@ -29,6 +29,7 @@ class SimplePlanner(QMainWindow):
         # --- Инициализация Событий ---
         self.data = {}
         self.addEventBtn.clicked.connect(self.event_add)
+        self.searchEvent.textChanged.connect(self.update_event_list)
 
         # Настройка QTreeWidget
         self.eventList.setColumnCount(2)
@@ -130,19 +131,39 @@ class SimplePlanner(QMainWindow):
         items = []
         # Сортируем по дате
         for key_date, values in sorted(self.data.items(), key=lambda x: x[0]):
-            item = QTreeWidgetItem([key_date.strftime("%d.%m.%Y")])
+            if self.searchEvent.text():
+                for i in values:
+                    if self.searchEvent.text() in i[0]:
+                        item = QTreeWidgetItem([key_date.strftime("%d.%m.%Y")])
 
-            item.setData(0, Qt.ItemDataRole.UserRole, key_date)
+                        item.setData(0, Qt.ItemDataRole.UserRole, key_date)
 
-            # Сортируем события по времени начала
-            for value_tuple in sorted(values, key=lambda x: x[1]):
-                name = value_tuple[0]
-                time_str = f"{value_tuple[1].strftime('%H:%M')} - {value_tuple[2].strftime('%H:%M')}"
-                child = QTreeWidgetItem([name, time_str])
-                child.setData(0, Qt.ItemDataRole.UserRole, value_tuple)
-                item.addChild(child)
-            items.append(item)
+                        # Сортируем события по времени начала
+                        for value_tuple in sorted(values, key=lambda x: x[1]):
+                            name = value_tuple[0]
+                            if self.searchEvent.text() in name:
+                                time_str = f"{value_tuple[1].strftime('%H:%M')} - {value_tuple[2].strftime('%H:%M')}"
+                                child = QTreeWidgetItem([name, time_str])
+                                child.setData(0, Qt.ItemDataRole.UserRole, value_tuple)
+                                item.addChild(child)
+                        items.append(item)
+                        break
+            else:
+                item = QTreeWidgetItem([key_date.strftime("%d.%m.%Y")])
+
+                item.setData(0, Qt.ItemDataRole.UserRole, key_date)
+
+                # Сортируем события по времени начала
+                for value_tuple in sorted(values, key=lambda x: x[1]):
+                    name = value_tuple[0]
+                    time_str = f"{value_tuple[1].strftime('%H:%M')} - {value_tuple[2].strftime('%H:%M')}"
+                    child = QTreeWidgetItem([name, time_str])
+                    child.setData(0, Qt.ItemDataRole.UserRole, value_tuple)
+                    item.addChild(child)
+                items.append(item)
         self.eventList.insertTopLevelItems(0, items)
+        if self.searchEvent.text():
+            self.eventList.expandAll()
 
     def delete_event(self, item):
         """Удаление события (или целого дня, если удаляется родитель)."""
