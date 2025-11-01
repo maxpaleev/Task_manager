@@ -41,6 +41,7 @@ class SimplePlanner(QMainWindow):
         # --- Инициализация Задач ---
         self.tasks = {category: [] for category in self.TASK_CATEGORIES}
         self.importance = self.TASK_CATEGORIES[0]
+        self.searchTask.textChanged.connect(self.update_task_list)
 
         # Подключение кнопок
         self.taskButton.clicked.connect(self.task_add)
@@ -218,23 +219,44 @@ class SimplePlanner(QMainWindow):
 
     def update_task_list(self):
         """Обновление (перерисовка) дерева задач (taskList) на основе данных self.tasks."""
+        search_text = self.searchTask.text()
         self.taskList.clear()
         items = []
         for category in self.TASK_CATEGORIES:
-            tasks = self.tasks[category]
-            if not tasks:
-                continue
+            if search_text:
+                tasks = self.tasks[category]
+                if not tasks:
+                    continue
+                for i in tasks:
+                    if search_text in i[0]:
+                        item = QTreeWidgetItem([category])
+                        item.setData(0, Qt.ItemDataRole.UserRole, category)
 
-            item = QTreeWidgetItem([category])
-            item.setData(0, Qt.ItemDataRole.UserRole, category)
+                        for task_tuple in tasks:
+                            name, desc = task_tuple
+                            if search_text in name:
+                                child = QTreeWidgetItem([name, desc])
+                                child.setData(0, Qt.ItemDataRole.UserRole, task_tuple)
+                                item.addChild(child)
+                        items.append(item)
+                        break
+            else:
+                tasks = self.tasks[category]
+                if not tasks:
+                    continue
 
-            for task_tuple in tasks:
-                name, desc = task_tuple
-                child = QTreeWidgetItem([name, desc])
-                child.setData(0, Qt.ItemDataRole.UserRole, task_tuple)
-                item.addChild(child)
-            items.append(item)
+                item = QTreeWidgetItem([category])
+                item.setData(0, Qt.ItemDataRole.UserRole, category)
+
+                for task_tuple in tasks:
+                    name, desc = task_tuple
+                    child = QTreeWidgetItem([name, desc])
+                    child.setData(0, Qt.ItemDataRole.UserRole, task_tuple)
+                    item.addChild(child)
+                items.append(item)
         self.taskList.insertTopLevelItems(0, items)
+        if search_text:
+            self.taskList.expandAll()
 
     def delete_task(self, item):
         """Удаление задачи или очистка категории."""
