@@ -82,15 +82,45 @@ class SimplePlanner(QMainWindow):
 
         elif action == action_edit:
             if tree_widget is self.eventList:
-                self.edit_event(item)
+                self.edit(item)
             elif tree_widget is self.taskList:
-                self.edit_task(item)
+                self.edit(item)
 
         elif action == action_expand:
             tree_widget.expandAll()
 
         elif action == action_collapse:
             tree_widget.collapseAll()
+
+    # ===================================================================
+    # 				ЛОГИКА УНИВЕРСАЛЬНОЙ ФУНКЦИИ
+    # ===================================================================
+    def edit(self, item):
+        if item.parent().text(0) in self.TASK_CATEGORIES or item.text(0) in self.TASK_CATEGORIES:
+            category_name = item.parent().data(0, Qt.ItemDataRole.UserRole)
+            task_data = item.data(0, Qt.ItemDataRole.UserRole)
+            name, desc = task_data
+            self.delete_task(item)
+
+            self.taskName.setText(name)
+            self.taskDes.setText(desc)
+            self.importance = category_name
+            for button in self.importanceChoice.buttons():
+                if button.text() == category_name:
+                    button.setChecked(True)
+                    break
+        else:
+            event_day_date = item.parent().data(0, Qt.ItemDataRole.UserRole)
+            event_data = item.data(0, Qt.ItemDataRole.UserRole)
+            event_name, event_start, event_end = event_data
+
+            self.delete_event(item)
+
+            # Заполняем поля ввода
+            self.timeStart.setTime(QTime(event_start.hour, event_start.minute))
+            self.timeEnd.setTime(QTime(event_end.hour, event_end.minute))
+            self.calendarWidget.setSelectedDate(QDate(event_day_date.year, event_day_date.month, event_day_date.day))
+            self.eventName.setText(event_name)
 
     # ===================================================================
     # 				ЛОГИКА СОБЫТИЙ (Events)
@@ -134,7 +164,7 @@ class SimplePlanner(QMainWindow):
         for key_date, values in sorted(self.data.items(), key=lambda x: x[0]):
             if self.searchEvent.text():
                 for i in values:
-                    if self.searchEvent.text() in i[0]:
+                    if self.searchEvent.text().lower() in i[0].lower():
                         item = QTreeWidgetItem([key_date.strftime("%d.%m.%Y")])
 
                         item.setData(0, Qt.ItemDataRole.UserRole, key_date)
@@ -142,7 +172,7 @@ class SimplePlanner(QMainWindow):
                         # Сортируем события по времени начала
                         for value_tuple in sorted(values, key=lambda x: x[1]):
                             name = value_tuple[0]
-                            if self.searchEvent.text() in name:
+                            if self.searchEvent.text().lower() in name.lower():
                                 time_str = f"{value_tuple[1].strftime('%H:%M')} - {value_tuple[2].strftime('%H:%M')}"
                                 child = QTreeWidgetItem([name, time_str])
                                 child.setData(0, Qt.ItemDataRole.UserRole, value_tuple)
@@ -183,21 +213,6 @@ class SimplePlanner(QMainWindow):
 
         self.update_event_list()
 
-    def edit_event(self, item):
-        """Редактирование события """
-
-        event_day_date = item.parent().data(0, Qt.ItemDataRole.UserRole)
-        event_data = item.data(0, Qt.ItemDataRole.UserRole)
-        event_name, event_start, event_end = event_data
-
-        self.delete_event(item)
-
-        # Заполняем поля ввода
-        self.timeStart.setTime(QTime(event_start.hour, event_start.minute))
-        self.timeEnd.setTime(QTime(event_end.hour, event_end.minute))
-        self.calendarWidget.setSelectedDate(QDate(event_day_date.year, event_day_date.month, event_day_date.day))
-        self.eventName.setText(event_name)
-
     # ==================================================================
     # 				ЛОГИКА ЗАДАЧ (Tasks)
     # ==================================================================
@@ -228,13 +243,13 @@ class SimplePlanner(QMainWindow):
                 if not tasks:
                     continue
                 for i in tasks:
-                    if search_text in i[0]:
+                    if search_text.lower() in i[0].lower():
                         item = QTreeWidgetItem([category])
                         item.setData(0, Qt.ItemDataRole.UserRole, category)
 
                         for task_tuple in tasks:
                             name, desc = task_tuple
-                            if search_text in name:
+                            if search_text.lower() in name.lower():
                                 child = QTreeWidgetItem([name, desc])
                                 child.setData(0, Qt.ItemDataRole.UserRole, task_tuple)
                                 item.addChild(child)
@@ -271,22 +286,6 @@ class SimplePlanner(QMainWindow):
             if category_name in self.tasks and task_data in self.tasks[category_name]:
                 self.tasks[category_name].remove(task_data)
         self.update_task_list()
-
-    def edit_task(self, item):
-        """Редактирование задачи (заполняет поля для нового ввода)."""
-
-        category_name = item.parent().data(0, Qt.ItemDataRole.UserRole)
-        task_data = item.data(0, Qt.ItemDataRole.UserRole)
-        name, desc = task_data
-        self.delete_task(item)
-
-        self.taskName.setText(name)
-        self.taskDes.setText(desc)
-        self.importance = category_name
-        for button in self.importanceChoice.buttons():
-            if button.text() == category_name:
-                button.setChecked(True)
-                break
 
 
 if __name__ == '__main__':
