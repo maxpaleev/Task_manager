@@ -92,6 +92,33 @@ class SimplePlanner(QMainWindow):
         elif action == action_collapse:
             tree_widget.collapseAll()
 
+    def edit(self, item):
+        if item.parent().text(0) in self.TASK_CATEGORIES or item.text(0) in self.TASK_CATEGORIES:
+            category_name = item.parent().data(0, Qt.ItemDataRole.UserRole)
+            task_data = item.data(0, Qt.ItemDataRole.UserRole)
+            name, desc = task_data
+            self.delete_task(item)
+
+            self.taskName.setText(name)
+            self.taskDes.setText(desc)
+            self.importance = category_name
+            for button in self.importanceChoice.buttons():
+                if button.text() == category_name:
+                    button.setChecked(True)
+                    break
+        else:
+            event_day_date = item.parent().data(0, Qt.ItemDataRole.UserRole)
+            event_data = item.data(0, Qt.ItemDataRole.UserRole)
+            event_name, event_start, event_end = event_data
+
+            self.delete_event(item)
+
+            # Заполняем поля ввода
+            self.timeStart.setTime(QTime(event_start.hour, event_start.minute))
+            self.timeEnd.setTime(QTime(event_end.hour, event_end.minute))
+            self.calendarWidget.setSelectedDate(QDate(event_day_date.year, event_day_date.month, event_day_date.day))
+            self.eventName.setText(event_name)
+
     # ===================================================================
     # 				ЛОГИКА УНИВЕРСАЛЬНОЙ ФУНКЦИИ
     # ===================================================================
