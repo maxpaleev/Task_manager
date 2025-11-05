@@ -157,43 +157,37 @@ class SimplePlanner(QMainWindow):
         self.update_event_list()  # Обновляем дерево
 
     def update_event_list(self):
-        """Обновление дерева событий (eventList) на основе данных self.data."""
+        """(ОПТИМИЗИРОВАНО) Обновление дерева событий (eventList) на основе данных self.data."""
+        search_text = self.searchEvent.text().lower()
         self.eventList.clear()
         items = []
+
         # Сортируем по дате
         for key_date, values in sorted(self.data.items(), key=lambda x: x[0]):
-            if self.searchEvent.text():
-                for i in values:
-                    if self.searchEvent.text().lower() in i[0].lower():
-                        item = QTreeWidgetItem([key_date.strftime("%d.%m.%Y")])
 
-                        item.setData(0, Qt.ItemDataRole.UserRole, key_date)
-
-                        # Сортируем события по времени начала
-                        for value_tuple in sorted(values, key=lambda x: x[1]):
-                            name = value_tuple[0]
-                            if self.searchEvent.text().lower() in name.lower():
-                                time_str = f"{value_tuple[1].strftime('%H:%M')} - {value_tuple[2].strftime('%H:%M')}"
-                                child = QTreeWidgetItem([name, time_str])
-                                child.setData(0, Qt.ItemDataRole.UserRole, value_tuple)
-                                item.addChild(child)
-                        items.append(item)
-                        break
+            # Сначала фильтруем события по поиску
+            if search_text:
+                matching_events = [event for event in values if search_text in event[0].lower()]
             else:
-                item = QTreeWidgetItem([key_date.strftime("%d.%m.%Y")])
+                matching_events = values  # Если поиска нет, берем все
 
+            # Если после фильтрации остались события, добавляем родителя (дату)
+            if matching_events:
+                item = QTreeWidgetItem([key_date.strftime("%d.%m.%Y")])
                 item.setData(0, Qt.ItemDataRole.UserRole, key_date)
 
-                # Сортируем события по времени начала
-                for value_tuple in sorted(values, key=lambda x: x[1]):
-                    name = value_tuple[0]
-                    time_str = f"{value_tuple[1].strftime('%H:%M')} - {value_tuple[2].strftime('%H:%M')}"
+                # Сортируем (уже отфильтрованные) события по времени начала
+                for value_tuple in sorted(matching_events, key=lambda x: x[1]):
+                    name, start, end = value_tuple
+                    time_str = f"{start.strftime('%H:%M')} - {end.strftime('%H:%M')}"
                     child = QTreeWidgetItem([name, time_str])
                     child.setData(0, Qt.ItemDataRole.UserRole, value_tuple)
                     item.addChild(child)
+
                 items.append(item)
+
         self.eventList.insertTopLevelItems(0, items)
-        if self.searchEvent.text():
+        if search_text:
             self.eventList.expandAll()
 
     def delete_event(self, item):
@@ -233,42 +227,34 @@ class SimplePlanner(QMainWindow):
         self.update_task_list()
 
     def update_task_list(self):
-        """Обновление (перерисовка) дерева задач (taskList) на основе данных self.tasks."""
-        search_text = self.searchTask.text()
+        """(ОПТИМИЗИРОВАНО) Обновление (перерисовка) дерева задач (taskList)."""
+        search_text = self.searchTask.text().lower()
         self.taskList.clear()
         items = []
+
         for category in self.TASK_CATEGORIES:
+            tasks = self.tasks[category]
+
+            # Сначала фильтруем задачи по поиску
             if search_text:
-                tasks = self.tasks[category]
-                if not tasks:
-                    continue
-                for i in tasks:
-                    if search_text.lower() in i[0].lower():
-                        item = QTreeWidgetItem([category])
-                        item.setData(0, Qt.ItemDataRole.UserRole, category)
-
-                        for task_tuple in tasks:
-                            name, desc = task_tuple
-                            if search_text.lower() in name.lower():
-                                child = QTreeWidgetItem([name, desc])
-                                child.setData(0, Qt.ItemDataRole.UserRole, task_tuple)
-                                item.addChild(child)
-                        items.append(item)
-                        break
+                matching_tasks = [task for task in tasks if search_text in task[0].lower()]
             else:
-                tasks = self.tasks[category]
-                if not tasks:
-                    continue
+                matching_tasks = tasks  # Если поиска нет, берем все
 
+            # Если в категории есть задачи (после фильтрации), добавляем
+            if matching_tasks:
                 item = QTreeWidgetItem([category])
                 item.setData(0, Qt.ItemDataRole.UserRole, category)
 
-                for task_tuple in tasks:
+                # Добавляем отфильтрованные задачи
+                for task_tuple in matching_tasks:
                     name, desc = task_tuple
                     child = QTreeWidgetItem([name, desc])
                     child.setData(0, Qt.ItemDataRole.UserRole, task_tuple)
                     item.addChild(child)
+
                 items.append(item)
+
         self.taskList.insertTopLevelItems(0, items)
         if search_text:
             self.taskList.expandAll()
