@@ -1,276 +1,299 @@
 import sys
+import datetime
+from typing import Dict, List, Tuple
 
 from PyQt6 import uic
 from PyQt6.QtCore import Qt, QDate, QTime
-from PyQt6.QtWidgets import QApplication, QMainWindow, QMessageBox, QTreeWidgetItem, QMenu
+from PyQt6.QtWidgets import (
+    QApplication, QMainWindow, QMessageBox, QTreeWidgetItem, QMenu, QTreeWidget
+)
+
+# Названия категорий вынесены в константу
+TASK_CATEGORIES = [
+    "Срочно и важно",
+    "Важно, но не срочно",
+    "Срочно, но не важно",
+    'Не срочно и не важно'
+]
 
 
 class SimplePlanner(QMainWindow):
     def __init__(self):
         super().__init__()
 
-        # Загрузка UI из файла .ui
+        # --- 1. Загрузка интерфейса ---
         try:
             uic.loadUi('design_test.ui', self)
         except Exception as e:
-            QMessageBox.critical(self, "Ошибка", f"Не удалось загрузить интерфейс: {e}")
+            QMessageBox.critical(self, "Ошибка", f"Не удалось загрузить интерфейс (design_test.ui): {e}")
             sys.exit(1)
 
         self.setWindowTitle('Минипланировщик')
 
-        # --- Категории задач ---
-        self.TASK_CATEGORIES = [
-            "Срочно и важно",
-            "Важно, но не срочно",
-            "Срочно, но не важно",
-            'Не срочно и не важно'
-        ]
+        self.events: Dict[datetime.date, List[Tuple[str, datetime.time, datetime.time]]] = {}
 
-        # --- Инициализация Событий ---
-        self.data = {}
-        self.addEventBtn.clicked.connect(self.event_add)
+        self.tasks: Dict[str, List[Tuple[str, str]]] = {cat: [] for cat in TASK_CATEGORIES}
+
+        self.current_importance = TASK_CATEGORIES[0]
+
+        # --- 3. Настройка UI компонентов ---
+        self._setup_tree_widgets()
+
+        # --- 4. Подключение сигналов (Events) ---
+        self.addEventBtn.clicked.connect(self.add_event)
         self.searchEvent.textChanged.connect(self.update_event_list)
 
-        # Настройка QTreeWidget
+        # --- 5. Подключение сигналов (Tasks) ---
+        self.taskButton.clicked.connect(self.add_task)
+        self.searchTask.textChanged.connect(self.update_task_list)
+        self.importanceChoice.buttonClicked.connect(self._set_importance)
+        self.taskDes.setMaxLength(100)
+
+    def _setup_tree_widgets(self):
+        """Настройка заголовков и меню для таблиц."""
+        # Настройка списка событий
         self.eventList.setColumnCount(2)
         self.eventList.setHeaderLabels(["Событие", "Время"])
-        # Включаем политику кастомного меню, чтобы работал правый клик
         self.eventList.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.eventList.customContextMenuRequested.connect(lambda pos: self.show_context_menu(self.eventList, pos))
+        self.eventList.customContextMenuRequested.connect(
+            lambda pos: self.show_context_menu(self.eventList, pos)
+        )
 
-        # --- Инициализация Задач ---
-        self.tasks = {category: [] for category in self.TASK_CATEGORIES}
-        self.importance = self.TASK_CATEGORIES[0]
-        self.searchTask.textChanged.connect(self.update_task_list)
-
-        # Подключение кнопок
-        self.taskButton.clicked.connect(self.task_add)
-        self.taskDes.setMaxLength(100)
-        self.importanceChoice.buttonClicked.connect(self.get_importance)
-
-        # Настройка QTreeWidget для задач
+        # Настройка списка задач
         self.taskList.setColumnCount(2)
         self.taskList.setHeaderLabels(["Название", "Описание"])
         self.taskList.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.taskList.customContextMenuRequested.connect(lambda pos: self.show_context_menu(self.taskList, pos))
+        self.taskList.customContextMenuRequested.connect(
+            lambda pos: self.show_context_menu(self.taskList, pos)
+        )
 
     # ===================================================================
-    # 				ЛОГИКА КОНТЕКСТНОГО МЕНЮ (context_menu)
+    # 				ЛОГИКА КОНТЕКСТНОГО МЕНЮ
     # ===================================================================
-    def show_context_menu(self, tree_widget, position):
+    def show_context_menu(self, tree_widget: QTreeWidget, position):
         item = tree_widget.itemAt(position)
         if not item:
             return
 
         menu = QMenu(self)
-
         action_del = menu.addAction("Удалить")
         action_edit = menu.addAction("Редактировать")
+        menu.addSeparator()
         action_expand = menu.addAction("Раскрыть все")
         action_collapse = menu.addAction("Свернуть все")
 
+        # Редактировать можно только элементы, но не заголовки (категории/даты)
         if not item.parent():
             action_edit.setEnabled(False)
 
         action = menu.exec(tree_widget.viewport().mapToGlobal(position))
 
+        if not action:
+            return
+
         if action == action_del:
-            if tree_widget is self.eventList:
-                self.delete_event(item)
-            elif tree_widget is self.taskList:
-                self.delete_task(item)
-
+            self._delete_item(tree_widget, item)
         elif action == action_edit:
-            if tree_widget is self.eventList:
-                self.edit(item)
-            elif tree_widget is self.taskList:
-                self.edit(item)
-
+            self._edit_item(tree_widget, item)
         elif action == action_expand:
             tree_widget.expandAll()
-
         elif action == action_collapse:
             tree_widget.collapseAll()
 
-    # ===================================================================
-    # 				ЛОГИКА УНИВЕРСАЛЬНОЙ ФУНКЦИИ
-    # ===================================================================
-    def edit(self, item):
-        if item.parent().text(0) in self.TASK_CATEGORIES or item.text(0) in self.TASK_CATEGORIES:
-            category_name = item.parent().data(0, Qt.ItemDataRole.UserRole)
-            task_data = item.data(0, Qt.ItemDataRole.UserRole)
-            name, desc = task_data
-            self.delete_task(item)
+    def _delete_item(self, tree_widget, item):
+        if tree_widget is self.eventList:
+            self._delete_event_logic(item)
+        elif tree_widget is self.taskList:
+            self._delete_task_logic(item)
 
+    def _edit_item(self, tree_widget, item):
+        parent = item.parent()
+        if not parent:
+            return
+
+        if tree_widget is self.eventList:
+            # --- Редактирование события ---
+            event_date = parent.data(0, Qt.ItemDataRole.UserRole)
+            event_data = item.data(0, Qt.ItemDataRole.UserRole)  # (name, start, end)
+
+            self._delete_event_logic(item)
+
+            # Заполняем поля
+            name, start, end = event_data
+            self.eventName.setText(name)
+            self.timeStart.setTime(QTime(start.hour, start.minute))
+            self.timeEnd.setTime(QTime(end.hour, end.minute))
+            self.calendarWidget.setSelectedDate(QDate(event_date.year, event_date.month, event_date.day))
+
+        elif tree_widget is self.taskList:
+            # --- Редактирование задачи ---
+            category_name = parent.data(0, Qt.ItemDataRole.UserRole)
+            task_data = item.data(0, Qt.ItemDataRole.UserRole)  # (name, desc)
+
+            # Удаляем старое
+            self._delete_task_logic(item)
+
+            # Заполняем поля
+            name, desc = task_data
             self.taskName.setText(name)
             self.taskDes.setText(desc)
-            self.importance = category_name
-            for button in self.importanceChoice.buttons():
-                if button.text() == category_name:
-                    button.setChecked(True)
+
+            # Переключаем радио-кнопку
+            self.current_importance = category_name
+            for btn in self.importanceChoice.buttons():
+                if btn.text() == category_name:
+                    btn.setChecked(True)
                     break
-        else:
-            event_day_date = item.parent().data(0, Qt.ItemDataRole.UserRole)
-            event_data = item.data(0, Qt.ItemDataRole.UserRole)
-            event_name, event_start, event_end = event_data
-
-            self.delete_event(item)
-
-            # Заполняем поля ввода
-            self.timeStart.setTime(QTime(event_start.hour, event_start.minute))
-            self.timeEnd.setTime(QTime(event_end.hour, event_end.minute))
-            self.calendarWidget.setSelectedDate(QDate(event_day_date.year, event_day_date.month, event_day_date.day))
-            self.eventName.setText(event_name)
 
     # ===================================================================
     # 				ЛОГИКА СОБЫТИЙ (Events)
     # ===================================================================
-
-    def event_add(self):
-        """Добавление нового события в календарь."""
-        if not self.eventName.text():
-            QMessageBox.warning(self, "Предупреждение", "Введите название события")
+    def add_event(self):
+        name = self.eventName.text().strip()
+        if not name:
+            QMessageBox.warning(self, "Ошибка", "Введите название события")
             return
 
-        event_day = self.calendarWidget.selectedDate().toPyDate()
-        event_start = self.timeStart.time().toPyTime()
-        event_end = self.timeEnd.time().toPyTime()
+        date_py = self.calendarWidget.selectedDate().toPyDate()
+        start_py = self.timeStart.time().toPyTime()
+        end_py = self.timeEnd.time().toPyTime()
 
-        if event_end < event_start:
-            QMessageBox.warning(self, "Ошибка", "Время окончания события не может быть раньше времени начала")
+        if end_py < start_py:
+            QMessageBox.warning(self, "Ошибка", "Время окончания не может быть раньше начала")
             return
 
-        event_tuple = (self.eventName.text(), event_start, event_end)
+        new_event = (name, start_py, end_py)
 
-        # Добавляем в словарь
-        if event_day in self.data:
-            if event_tuple not in self.data[event_day]:
-                self.data[event_day].append(event_tuple)
-        else:
-            self.data[event_day] = [event_tuple]
+        if date_py not in self.events:
+            self.events[date_py] = []
 
-        # Очистка полей ввода
+        # Простое добавление
+        self.events[date_py].append(new_event)
+
+        # Очистка и обновление
         self.eventName.clear()
         self.timeStart.setTime(QTime(0, 0))
         self.timeEnd.setTime(QTime(0, 0))
-
-        self.update_event_list()  # Обновляем дерево
+        self.update_event_list()
 
     def update_event_list(self):
-        """(ОПТИМИЗИРОВАНО) Обновление дерева событий (eventList) на основе данных self.data."""
-        search_text = self.searchEvent.text().lower()
+        """Перерисовка дерева событий."""
+        search = self.searchEvent.text().lower()
         self.eventList.clear()
+
         items = []
+        # Сортируем даты по возрастанию
+        for date_key in sorted(self.events.keys()):
+            events_list = self.events[date_key]
 
-        # Сортируем по дате
-        for key_date, values in sorted(self.data.items(), key=lambda x: x[0]):
-
-            # Сначала фильтруем события по поиску
-            if search_text:
-                matching_events = [event for event in values if search_text in event[0].lower()]
+            # Фильтрация
+            if search:
+                matching = [e for e in events_list if search in e[0].lower()]
             else:
-                matching_events = values  # Если поиска нет, берем все
+                matching = events_list
 
-            # Если после фильтрации остались события, добавляем родителя (дату)
-            if matching_events:
-                item = QTreeWidgetItem([key_date.strftime("%d.%m.%Y")])
-                item.setData(0, Qt.ItemDataRole.UserRole, key_date)
+            if matching:
+                root_item = QTreeWidgetItem([date_key.strftime("%d.%m.%Y")])
+                root_item.setData(0, Qt.ItemDataRole.UserRole, date_key)
 
-                # Сортируем (уже отфильтрованные) события по времени начала
-                for value_tuple in sorted(matching_events, key=lambda x: x[1]):
-                    name, start, end = value_tuple
+                # Сортируем события внутри дня по времени начала
+                for ev in sorted(matching, key=lambda x: x[1]):
+                    name, start, end = ev
                     time_str = f"{start.strftime('%H:%M')} - {end.strftime('%H:%M')}"
                     child = QTreeWidgetItem([name, time_str])
-                    child.setData(0, Qt.ItemDataRole.UserRole, value_tuple)
-                    item.addChild(child)
+                    child.setData(0, Qt.ItemDataRole.UserRole, ev)
+                    root_item.addChild(child)
 
-                items.append(item)
+                items.append(root_item)
 
         self.eventList.insertTopLevelItems(0, items)
-        if search_text:
+        if search:
             self.eventList.expandAll()
 
-    def delete_event(self, item):
-        """Удаление события (или целого дня, если удаляется родитель)."""
-        if not item.parent():
-            key = item.data(0, Qt.ItemDataRole.UserRole)
-            if key in self.data:
-                del self.data[key]
-        elif item.parent():
-            key = item.parent().data(0, Qt.ItemDataRole.UserRole)
-            event_data = item.data(0, Qt.ItemDataRole.UserRole)
+    def _delete_event_logic(self, item):
+        """Удаление события из структуры данных."""
+        if item.parent():
+            # Удаляем конкретное событие
+            date_key = item.parent().data(0, Qt.ItemDataRole.UserRole)
+            ev_data = item.data(0, Qt.ItemDataRole.UserRole)
 
-            if key in self.data and event_data in self.data[key]:
-                self.data[key].remove(event_data)
-                if not self.data[key]:
-                    del self.data[key]
+            if date_key in self.events and ev_data in self.events[date_key]:
+                self.events[date_key].remove(ev_data)
+                # Если список событий на этот день пуст, удаляем сам день
+                if not self.events[date_key]:
+                    del self.events[date_key]
+        else:
+            # Удаляем весь день (родительский узел)
+            date_key = item.data(0, Qt.ItemDataRole.UserRole)
+            if date_key in self.events:
+                del self.events[date_key]
 
         self.update_event_list()
 
     # ==================================================================
     # 				ЛОГИКА ЗАДАЧ (Tasks)
     # ==================================================================
-    def get_importance(self, button):
-        """Получение категории важности из QButtonGroup (радиокнопки)."""
-        self.importance = button.text()
+    def _set_importance(self, button):
+        self.current_importance = button.text()
 
-    def task_add(self):
-        """Добавление новой задачи."""
-        task_name = self.taskName.text()
-        task_desc = self.taskDes.text()
-        if not task_name:
+    def add_task(self):
+        name = self.taskName.text().strip()
+        desc = self.taskDes.text().strip()
+
+        if not name:
             QMessageBox.warning(self, "Ошибка", "Введите название задачи")
             return
-        self.tasks[self.importance].append((task_name, task_desc))
+
+        self.tasks[self.current_importance].append((name, desc))
+
         self.taskName.clear()
         self.taskDes.clear()
         self.update_task_list()
 
     def update_task_list(self):
-        """(ОПТИМИЗИРОВАНО) Обновление (перерисовка) дерева задач (taskList)."""
-        search_text = self.searchTask.text().lower()
+        """Перерисовка дерева задач."""
+        search = self.searchTask.text().lower()
         self.taskList.clear()
         items = []
 
-        for category in self.TASK_CATEGORIES:
-            tasks = self.tasks[category]
+        for category in TASK_CATEGORIES:
+            tasks_list = self.tasks[category]
 
-            # Сначала фильтруем задачи по поиску
-            if search_text:
-                matching_tasks = [task for task in tasks if search_text in task[0].lower()]
+            if search:
+                matching = [t for t in tasks_list if search in t[0].lower()]
             else:
-                matching_tasks = tasks  # Если поиска нет, берем все
+                matching = tasks_list
 
-            # Если в категории есть задачи (после фильтрации), добавляем
-            if matching_tasks:
-                item = QTreeWidgetItem([category])
-                item.setData(0, Qt.ItemDataRole.UserRole, category)
+            if matching:
+                root = QTreeWidgetItem([category])
+                root.setData(0, Qt.ItemDataRole.UserRole, category)
 
-                # Добавляем отфильтрованные задачи
-                for task_tuple in matching_tasks:
-                    name, desc = task_tuple
+                for t in matching:
+                    name, desc = t
                     child = QTreeWidgetItem([name, desc])
-                    child.setData(0, Qt.ItemDataRole.UserRole, task_tuple)
-                    item.addChild(child)
+                    child.setData(0, Qt.ItemDataRole.UserRole, t)
+                    root.addChild(child)
 
-                items.append(item)
+                items.append(root)
 
         self.taskList.insertTopLevelItems(0, items)
-        if search_text:
+        if search:
             self.taskList.expandAll()
 
-    def delete_task(self, item):
-        """Удаление задачи или очистка категории."""
-        if not item.parent():
-            category_name = item.data(0, Qt.ItemDataRole.UserRole)
-            if category_name in self.tasks:
-                self.tasks[category_name].clear()
-        elif item.parent():
+    def _delete_task_logic(self, item):
+        """Удаление задачи из структуры данных."""
+        if item.parent():
+            # Удаляем конкретную задачу
+            cat = item.parent().data(0, Qt.ItemDataRole.UserRole)
+            t_data = item.data(0, Qt.ItemDataRole.UserRole)
+            if cat in self.tasks and t_data in self.tasks[cat]:
+                self.tasks[cat].remove(t_data)
+        else:
+            # Очищаем всю категорию
+            cat = item.data(0, Qt.ItemDataRole.UserRole)
+            if cat in self.tasks:
+                self.tasks[cat].clear()
 
-            category_name = item.parent().data(0, Qt.ItemDataRole.UserRole)
-            task_data = item.data(0, Qt.ItemDataRole.UserRole)
-            if category_name in self.tasks and task_data in self.tasks[category_name]:
-                self.tasks[category_name].remove(task_data)
         self.update_task_list()
 
 
