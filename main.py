@@ -366,7 +366,7 @@ class SimplePlanner(QMainWindow):
                 cursor = self.db.cursor()
                 cursor.execute('''
                     DELETE FROM tasks 
-                    WHERE name = ? AND category = ?''', (t_data[0], cat))
+                    WHERE name = ? AND description = ? AND category = ?''', (t_data[0],t_data[1], cat))
                 self.db.commit()
             except sqlite3.Error as e:
                 QMessageBox.critical(self, "Ошибка БД", f"Ошибка удаления задачи: {e}")
