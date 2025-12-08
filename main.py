@@ -66,7 +66,7 @@ class SimplePlanner(QMainWindow):
         self.taskDes.setMaxLength(100)
 
     # -------------------------------------------------------------------
-    # ОБЩИЙ МЕТОД ДЛЯ РАБОТЫ С БД (planner.db)
+    # ОБЩИЙ МЕТОД ДЛЯ РАБОТЫ С БД
     # -------------------------------------------------------------------
 
     def _execute_query(self, query: str, params: Tuple = (), commit: bool = False, fetch_all: bool = False):
