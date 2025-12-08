@@ -1,6 +1,7 @@
 import sys
 import datetime
 import sqlite3
+import threading
 from typing import Dict, List, Tuple
 
 from plyer import notification
@@ -8,8 +9,11 @@ from plyer import notification
 from PyQt6 import uic
 from PyQt6.QtCore import Qt, QDate, QTime, QTimer
 from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QMessageBox, QTreeWidgetItem, QMenu, QTreeWidget
+    QApplication, QMainWindow, QMessageBox, QTreeWidgetItem, QMenu, QTreeWidget, QInputDialog
 )
+
+# Импортируем run_bot_thread для запуска и send_notification (переименован) для отправки
+from tg_bot import run_bot_thread, send_notification as send_telegram_notification
 
 TASK_CATEGORIES = [
     "Срочно и важно",
@@ -24,6 +28,7 @@ class SimplePlanner(QMainWindow):
     def __init__(self):
         super().__init__()
 
+        # Загрузка интерфейса из файла
         try:
             uic.loadUi('design_test.ui', self)
         except Exception as e:
@@ -32,28 +37,63 @@ class SimplePlanner(QMainWindow):
 
         self.setWindowTitle('Минипланировщик')
 
+        # Инициализация переменных
         self.events: Dict[datetime.date, List[Tuple[str, datetime.time, datetime.time]]] = {}
         self.tasks: Dict[str, List[Tuple[str, str]]] = {cat: [] for cat in TASK_CATEGORIES}
+        self.db = None
+        self.tg_enabled = False  # Использовано более понятное имя
 
         self._init_db()
         self.load_data()
+        self._setup_bot_configuration()  # Настройка токена и запуск потока бота
 
         self.current_importance = TASK_CATEGORIES[0]
 
         self._setup_tree_widgets()
 
+        # Инициализация таймера для проверки уведомлений
         self.last_alert_minute = -1
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.check_alerts)
-        self.timer.start(10000)
+        self.timer.start(5000)  # Проверка каждые 5 секунд
 
+        # Соединение сигналов
         self.addEventBtn.clicked.connect(self.add_event)
         self.searchEvent.textChanged.connect(self.update_event_list)
-
         self.taskButton.clicked.connect(self.add_task)
         self.searchTask.textChanged.connect(self.update_task_list)
         self.importanceChoice.buttonClicked.connect(self._set_importance)
         self.taskDes.setMaxLength(100)
+
+    # -------------------------------------------------------------------
+    # ОБЩИЙ МЕТОД ДЛЯ РАБОТЫ С БД
+    # -------------------------------------------------------------------
+
+    def _execute_query(self, query: str, params: Tuple = (), commit: bool = False, fetch_all: bool = False):
+        """Централизованное выполнение запросов к БД (planner.db) с обработкой ошибок."""
+        if not self.db:
+            QMessageBox.warning(self, "Предупреждение", "База данных (planner.db) не инициализирована.")
+            return
+
+        try:
+            cursor = self.db.cursor()
+            cursor.execute(query, params)
+
+            if commit:
+                self.db.commit()
+
+            if fetch_all:
+                return cursor.fetchall()
+
+            return True
+
+        except sqlite3.Error as e:
+            QMessageBox.critical(self, "Ошибка БД", f"Ошибка выполнения запроса:\n{e}")
+            return False
+
+    # -------------------------------------------------------------------
+    # ЛОГИКА БД И НАСТРОЙКИ БОТА (Оптимизация)
+    # -------------------------------------------------------------------
 
     def closeEvent(self, event):
         if self.db:
@@ -61,11 +101,12 @@ class SimplePlanner(QMainWindow):
         event.accept()
 
     def _init_db(self):
+        """Инициализация обеих баз данных: planner.db и settings.db."""
         try:
+            # 1. planner.db
             self.db = sqlite3.connect('planner.db')
-            cursor = self.db.cursor()
-
-            cursor.execute('''
+            queries = [
+                '''
                 CREATE TABLE IF NOT EXISTS events (
                     id INTEGER PRIMARY KEY,
                     name TEXT NOT NULL,
@@ -73,56 +114,120 @@ class SimplePlanner(QMainWindow):
                     time_start TEXT NOT NULL,
                     time_end TEXT NOT NULL
                 )
-            ''')
-            cursor.execute('''
-                            CREATE TABLE IF NOT EXISTS tasks (
+                ''',
+                '''
+                CREATE TABLE IF NOT EXISTS tasks (
+                    id INTEGER PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    description TEXT,
+                    category TEXT NOT NULL
+                )
+                '''
+            ]
+            for query in queries:
+                self._execute_query(query, commit=True)
+
+            # 2. settings.db
+            db_s = sqlite3.connect('settings.db')
+            cur_s = db_s.cursor()
+            cur_s.execute('''
+                            CREATE TABLE IF NOT EXISTS settings (
                                 id INTEGER PRIMARY KEY,
-                                name TEXT NOT NULL,
-                                description TEXT,
-                                category TEXT NOT NULL
+                                tg_true TEXT NOT NULL,
+                                bot_token TEXT,
+                                telegram_id INTEGER
                             )
-                        ''')
-            self.db.commit()
+                            ''')
+            db_s.commit()
+            db_s.close()
+
         except sqlite3.Error as e:
             QMessageBox.critical(self, "Ошибка БД", f"Не удалось инициализировать базу данных: {e}")
             sys.exit(1)
 
-    def load_data(self):
-        if not self.db:
-            QMessageBox.warning(self, "Предупреждение", "База данных не инициализирована")
-            return
+    def _setup_bot_configuration(self):
+        """Проверка токена бота, запрос у пользователя и запуск потока."""
+        db = sqlite3.connect('settings.db')
+        cur = db.cursor()
+        settings = cur.execute("SELECT bot_token, tg_true FROM settings").fetchone()
 
+        if not settings:
+            # Первый запуск: запрашиваем токен
+            token, ok = QInputDialog.getText(self, 'Настройка Telegram',
+                                             'Введите токен бота (@BotFather), если хотите уведомления. Оставьте пустым, если не хотите.')
+
+            if ok:
+                # Определяем статус (1 или 0)
+                tg_status = '1' if token.strip() else '0'
+                try:
+                    # Запись настроек
+                    cur.execute('INSERT INTO settings (bot_token, tg_true, telegram_id) VALUES (?, ?, ?)',
+                                (token.strip(), tg_status, None))
+                    db.commit()
+                    if tg_status == '1':
+                        QMessageBox.information(self, 'Успех',
+                                                'Токен сохранен. Для активации уведомлений напишите боту /start.')
+                    else:
+                        QMessageBox.information(self, 'Настройки', 'Telegram уведомления отключены.')
+                except sqlite3.Error:
+                    QMessageBox.warning(self, 'Ошибка', 'Не удалось сохранить токен.')
+
+                self.tg_enabled = int(tg_status)
+            else:
+                # Если нажата отмена, считать, что Telegram отключен
+                self.tg_enabled = 0
+        else:
+            # Настройки уже есть
+            token, tg_status = settings
+            self.tg_enabled = int(tg_status)
+
+        db.close()
+
+        # Запуск бота:
+        if self.tg_enabled:
+            # Используем run_bot_thread, который сам загрузит токен и ID
+            self.bot_thread = threading.Thread(target=run_bot_thread, daemon=True)
+            self.bot_thread.start()
+
+    def load_data(self):
         self.events.clear()
         for category in TASK_CATEGORIES:
             self.tasks[category] = []
 
-        cursor = self.db.cursor()
+        # Загрузка событий
+        event_rows = self._execute_query(
+            "SELECT name, event_date, time_start, time_end FROM events ORDER BY event_date, time_start",
+            fetch_all=True
+        )
+        if event_rows:
+            for name, event_date, time_start, time_end in event_rows:
+                try:
+                    date = datetime.datetime.strptime(event_date, "%Y-%m-%d").date()
+                    time_start_obj = datetime.datetime.strptime(time_start, "%H:%M:%S").time()
+                    time_end_obj = datetime.datetime.strptime(time_end, "%H:%M:%S").time()
 
-        cursor.execute("SELECT name, event_date, time_start, time_end "
-                       "FROM events "
-                       "ORDER BY event_date, time_start")
-        for name, event_date, time_start, time_end in cursor.fetchall():
-            try:
-                date = datetime.datetime.strptime(event_date, "%Y-%m-%d").date()
-                time_start = datetime.datetime.strptime(time_start, "%H:%M:%S").time()
-                time_end = datetime.datetime.strptime(time_end, "%H:%M:%S").time()
+                    if date not in self.events:
+                        self.events[date] = []
+                    self.events[date].append((name, time_start_obj, time_end_obj))
+                except ValueError:
+                    continue
 
-                if date not in self.events:
-                    self.events[date] = []
-                self.events[date].append((name, time_start, time_end))
-            except ValueError:
-                continue
-
-        cursor.execute("SELECT name, description, category "
-                       "FROM tasks")
-        for name, desc, cat in cursor.fetchall():
-            if cat in self.tasks:
-                self.tasks[cat].append((name, desc))
-
-        cursor.close()
+        # Загрузка задач
+        task_rows = self._execute_query(
+            "SELECT name, description, category FROM tasks",
+            fetch_all=True
+        )
+        if task_rows:
+            for name, desc, cat in task_rows:
+                if cat in self.tasks:
+                    self.tasks[cat].append((name, desc))
 
         self.update_event_list()
         self.update_task_list()
+
+    # -------------------------------------------------------------------
+    # ЛОГИКА ДЕРЕВЬЕВ
+    # -------------------------------------------------------------------
 
     def _setup_tree_widgets(self):
         self.eventList.setColumnCount(2)
@@ -140,7 +245,7 @@ class SimplePlanner(QMainWindow):
         )
 
     # -------------------------------------------------------------------
-    # ЛОГИКА КОНТЕКСТНОГО МЕНЮ
+    # ЛОГИКА КОНТЕКСТНОГО МЕНЮ (Осталась без изменений)
     # -------------------------------------------------------------------
 
     def show_context_menu(self, tree_widget: QTreeWidget, position):
@@ -212,7 +317,7 @@ class SimplePlanner(QMainWindow):
                     break
 
     # -------------------------------------------------------------------
-    # ЛОГИКА УВЕДОМЛЕНИЙ
+    # ЛОГИКА УВЕДОМЛЕНИЙ (Обновлено)
     # -------------------------------------------------------------------
 
     def check_alerts(self):
@@ -228,9 +333,20 @@ class SimplePlanner(QMainWindow):
             for event in self.events[current_date]:
                 name, start, end = event
                 if start.hour == current_time.hour and start.minute == current_time.minute:
-                    self.send_notification(name, start, end)
 
-    def send_notification(self, title, time_s, time_e):
+                    # 1. Отправка Windows-уведомления
+                    self._send_windows_notification(name, start, end)
+
+                    # 2. Отправка Telegram-уведомления с проверкой статуса
+                    if self.tg_enabled:
+                        # Проверяем статус отправки
+                        if not send_telegram_notification(name, start, end):
+                            QMessageBox.warning(self, "Ошибка Telegram",
+                                                f"Не удалось отправить уведомление о событии '{name}' в Telegram. "
+                                                "Возможно, вы не запустили бота командой /start.")
+
+    def _send_windows_notification(self, title, time_s, time_e):
+        """Отправка системного уведомления Windows."""
         time_s_str = time_s.strftime("%H:%M")
         time_e_str = time_e.strftime("%H:%M")
         try:
@@ -241,7 +357,7 @@ class SimplePlanner(QMainWindow):
                 timeout=10
             )
         except Exception as e:
-            print(f'Ошибка при отправке уведомления: {e}')
+            print(f"Не удалось отправить Windows уведомление: {e}")
 
     # -------------------------------------------------------------------
     # ЛОГИКА СОБЫТИЙ (Events)
@@ -257,27 +373,25 @@ class SimplePlanner(QMainWindow):
         start_py = self.timeStart.time().toPyTime()
         end_py = self.timeEnd.time().toPyTime()
 
-        date_str = date_py.strftime("%Y-%m-%d")
-        start_str = start_py.strftime("%H:%M:%S")
-        end_str = end_py.strftime("%H:%M:%S")
-
         if end_py < start_py:
             QMessageBox.warning(self, "Ошибка", "Время окончания не может быть раньше начала")
             return
 
-        try:
-            cursor = self.db.cursor()
-            cursor.execute('''INSERT INTO events (name, event_date, time_start, time_end) VALUES (?, ?, ?, ?)''',
-                           (name, date_str, start_str, end_str))
-            self.db.commit()
-        except sqlite3.Error as e:
-            QMessageBox.critical(self, "Ошибка БД", f"Ошибка добавления события: {e}")
-            return
+        date_str = date_py.strftime("%Y-%m-%d")
+        start_str = start_py.strftime("%H:%M:%S")
+        end_str = end_py.strftime("%H:%M:%S")
 
-        self.eventName.clear()
-        self.timeStart.setTime(QTime(0, 0))
-        self.timeEnd.setTime(QTime(0, 0))
-        self.load_data()
+        success = self._execute_query(
+            '''INSERT INTO events (name, event_date, time_start, time_end) VALUES (?, ?, ?, ?)''',
+            (name, date_str, start_str, end_str),
+            commit=True
+        )
+
+        if success:
+            self.eventName.clear()
+            self.timeStart.setTime(QTime(0, 0))
+            self.timeEnd.setTime(QTime(0, 0))
+            self.load_data()
 
     def update_event_list(self):
         search = self.searchEvent.text().lower()
@@ -311,6 +425,7 @@ class SimplePlanner(QMainWindow):
 
     def _delete_event_logic(self, item):
         if item.parent():
+            # Удаление конкретного события
             date_key = item.parent().data(0, Qt.ItemDataRole.UserRole)
             ev_data = item.data(0, Qt.ItemDataRole.UserRole)
             name, start_time, end_time = ev_data
@@ -319,28 +434,17 @@ class SimplePlanner(QMainWindow):
             start_str = start_time.strftime("%H:%M:%S")
             end_str = end_time.strftime("%H:%M:%S")
 
-            try:
-                cursor = self.db.cursor()
-                cursor.execute('''
-                    DELETE FROM events 
-                    WHERE name = ? AND event_date = ? AND time_start = ? AND time_end = ?'''
-                               , (name, date_str, start_str, end_str))
-                self.db.commit()
-            except sqlite3.Error as e:
-                QMessageBox.critical(self, "Ошибка БД", f"Ошибка удаления события: {e}")
+            query = '''DELETE FROM events WHERE name = ? AND event_date = ? AND time_start = ? AND time_end = ?'''
+            params = (name, date_str, start_str, end_str)
         else:
+            # Удаление всех событий за день
             date_key = item.data(0, Qt.ItemDataRole.UserRole)
             date_str = date_key.strftime("%Y-%m-%d")
 
-            try:
-                cursor = self.db.cursor()
-                cursor.execute('''
-                    DELETE FROM events 
-                    WHERE event_date = ?''', (date_str,))
-                self.db.commit()
-            except sqlite3.Error as e:
-                QMessageBox.critical(self, "Ошибка БД", f"Ошибка удаления события: {e}")
+            query = '''DELETE FROM events WHERE event_date = ?'''
+            params = (date_str,)
 
+        self._execute_query(query, params, commit=True)
         self.load_data()
 
     # ------------------------------------------------------------------
@@ -358,17 +462,16 @@ class SimplePlanner(QMainWindow):
             QMessageBox.warning(self, "Ошибка", "Введите название задачи")
             return
 
-        try:
-            cursor = self.db.cursor()
-            cursor.execute('''INSERT INTO tasks (name, description, category) VALUES (?, ?, ?)''',
-                           (name, desc, self.current_importance))
-            self.db.commit()
-        except sqlite3.Error as e:
-            QMessageBox.critical(self, "Ошибка БД", f"Ошибка добавления задачи: {e}")
+        success = self._execute_query(
+            '''INSERT INTO tasks (name, description, category) VALUES (?, ?, ?)''',
+            (name, desc, self.current_importance),
+            commit=True
+        )
 
-        self.taskName.clear()
-        self.taskDes.clear()
-        self.load_data()
+        if success:
+            self.taskName.clear()
+            self.taskDes.clear()
+            self.load_data()
 
     def update_task_list(self):
         search = self.searchTask.text().lower()
@@ -401,29 +504,20 @@ class SimplePlanner(QMainWindow):
 
     def _delete_task_logic(self, item):
         if item.parent():
+            # Удаление конкретной задачи
             cat = item.parent().data(0, Qt.ItemDataRole.UserRole)
             t_data = item.data(0, Qt.ItemDataRole.UserRole)
 
-            try:
-                cursor = self.db.cursor()
-                cursor.execute('''
-                    DELETE FROM tasks 
-                    WHERE name = ? AND description = ? AND category = ?''', (t_data[0], t_data[1], cat))
-                self.db.commit()
-            except sqlite3.Error as e:
-                QMessageBox.critical(self, "Ошибка БД", f"Ошибка удаления задачи: {e}")
+            query = '''DELETE FROM tasks WHERE name = ? AND description = ? AND category = ?'''
+            params = (t_data[0], t_data[1], cat)
         else:
+            # Удаление всех задач в категории
             cat = item.data(0, Qt.ItemDataRole.UserRole)
 
-            try:
-                cursor = self.db.cursor()
-                cursor.execute('''
-                    DELETE FROM tasks 
-                    WHERE category = ?''', (cat,))
-                self.db.commit()
-            except sqlite3.Error as e:
-                QMessageBox.critical(self, "Ошибка БД", f"Ошибка удаления задачи: {e}")
+            query = '''DELETE FROM tasks WHERE category = ?'''
+            params = (cat,)
 
+        self._execute_query(query, params, commit=True)
         self.load_data()
 
 
