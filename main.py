@@ -9,7 +9,7 @@ from plyer import notification
 from PyQt6 import uic
 from PyQt6.QtCore import Qt, QDate, QTime, QTimer
 from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QMessageBox, QTreeWidgetItem, QMenu, QTreeWidget
+    QApplication, QMainWindow, QMessageBox, QTreeWidgetItem, QMenu, QTreeWidget, QInputDialog
 )
 
 # Импортируем run_bot_thread для запуска и send_notification (переименован) для отправки
@@ -41,17 +41,15 @@ class SimplePlanner(QMainWindow):
         self.events: Dict[datetime.date, List[Tuple[str, datetime.time, datetime.time]]] = {}
         self.tasks: Dict[str, List[Tuple[str, str]]] = {cat: [] for cat in TASK_CATEGORIES}
         self.db = None
+        self.tg_enabled = False  # Использовано более понятное имя
 
         self._init_db()
         self.load_data()
+        self._setup_bot_configuration()  # Настройка токена и запуск потока бота
 
         self.current_importance = TASK_CATEGORIES[0]
 
         self._setup_tree_widgets()
-
-        # Инициализация бота: запуск в отдельном потоке
-        self.bot_thread = threading.Thread(target=run_bot_thread, daemon=True)
-        self.bot_thread.start()
 
         # Инициализация таймера для проверки уведомлений
         self.last_alert_minute = -1
@@ -59,7 +57,7 @@ class SimplePlanner(QMainWindow):
         self.timer.timeout.connect(self.check_alerts)
         self.timer.start(5000)  # Проверка каждые 5 секунд
 
-        # Соединение сигналов (осталось как в оригинале)
+        # Соединение сигналов
         self.addEventBtn.clicked.connect(self.add_event)
         self.searchEvent.textChanged.connect(self.update_event_list)
         self.taskButton.clicked.connect(self.add_task)
@@ -68,13 +66,13 @@ class SimplePlanner(QMainWindow):
         self.taskDes.setMaxLength(100)
 
     # -------------------------------------------------------------------
-    # ОБЩИЙ МЕТОД ДЛЯ РАБОТЫ С БД (Оптимизация)
+    # ОБЩИЙ МЕТОД ДЛЯ РАБОТЫ С БД (planner.db)
     # -------------------------------------------------------------------
 
     def _execute_query(self, query: str, params: Tuple = (), commit: bool = False, fetch_all: bool = False):
-        """Централизованное выполнение запросов к БД с обработкой ошибок."""
+        """Централизованное выполнение запросов к БД (planner.db) с обработкой ошибок."""
         if not self.db:
-            QMessageBox.warning(self, "Предупреждение", "База данных не инициализирована.")
+            QMessageBox.warning(self, "Предупреждение", "База данных (planner.db) не инициализирована.")
             return
 
         try:
@@ -94,7 +92,7 @@ class SimplePlanner(QMainWindow):
             return False
 
     # -------------------------------------------------------------------
-    # ЛОГИКА БД (Обновлено с использованием _execute_query)
+    # ЛОГИКА БД И НАСТРОЙКИ БОТА (Оптимизация)
     # -------------------------------------------------------------------
 
     def closeEvent(self, event):
@@ -103,9 +101,10 @@ class SimplePlanner(QMainWindow):
         event.accept()
 
     def _init_db(self):
+        """Инициализация обеих баз данных: planner.db и settings.db."""
         try:
+            # 1. planner.db
             self.db = sqlite3.connect('planner.db')
-
             queries = [
                 '''
                 CREATE TABLE IF NOT EXISTS events (
@@ -125,13 +124,70 @@ class SimplePlanner(QMainWindow):
                 )
                 '''
             ]
-
             for query in queries:
                 self._execute_query(query, commit=True)
+
+            # 2. settings.db
+            db_s = sqlite3.connect('settings.db')
+            cur_s = db_s.cursor()
+            cur_s.execute('''
+                            CREATE TABLE IF NOT EXISTS settings (
+                                id INTEGER PRIMARY KEY,
+                                tg_true TEXT NOT NULL,
+                                bot_token TEXT,
+                                telegram_id INTEGER
+                            )
+                            ''')
+            db_s.commit()
+            db_s.close()
 
         except sqlite3.Error as e:
             QMessageBox.critical(self, "Ошибка БД", f"Не удалось инициализировать базу данных: {e}")
             sys.exit(1)
+
+    def _setup_bot_configuration(self):
+        """Проверка токена бота, запрос у пользователя и запуск потока."""
+        db = sqlite3.connect('settings.db')
+        cur = db.cursor()
+        settings = cur.execute("SELECT bot_token, tg_true FROM settings").fetchone()
+
+        if not settings:
+            # Первый запуск: запрашиваем токен
+            token, ok = QInputDialog.getText(self, 'Настройка Telegram',
+                                             'Введите токен бота (@BotFather), если хотите уведомления. Оставьте пустым, если не хотите.')
+
+            if ok:
+                # Определяем статус (1 или 0)
+                tg_status = '1' if token.strip() else '0'
+                try:
+                    # Запись настроек
+                    cur.execute('INSERT INTO settings (bot_token, tg_true, telegram_id) VALUES (?, ?, ?)',
+                                (token.strip(), tg_status, None))
+                    db.commit()
+                    if tg_status == '1':
+                        QMessageBox.information(self, 'Успех',
+                                                'Токен сохранен. Для активации уведомлений напишите боту /start.')
+                    else:
+                        QMessageBox.information(self, 'Настройки', 'Telegram уведомления отключены.')
+                except sqlite3.Error:
+                    QMessageBox.warning(self, 'Ошибка', 'Не удалось сохранить токен.')
+
+                self.tg_enabled = int(tg_status)
+            else:
+                # Если нажата отмена, считать, что Telegram отключен
+                self.tg_enabled = 0
+        else:
+            # Настройки уже есть
+            token, tg_status = settings
+            self.tg_enabled = int(tg_status)
+
+        db.close()
+
+        # Запуск бота:
+        if self.tg_enabled:
+            # Используем run_bot_thread, который сам загрузит токен и ID
+            self.bot_thread = threading.Thread(target=run_bot_thread, daemon=True)
+            self.bot_thread.start()
 
     def load_data(self):
         self.events.clear()
@@ -281,12 +337,13 @@ class SimplePlanner(QMainWindow):
                     # 1. Отправка Windows-уведомления
                     self._send_windows_notification(name, start, end)
 
-                    # 2. Отправка Telegram-уведомления
-                    if not send_telegram_notification(name, start, end):
-                        # Уведомляем пользователя, если бот не готов
-                        QMessageBox.warning(self, "Предупреждение",
-                                            "Не удалось отправить уведомление в Telegram. "
-                                            "Проверьте, запущен ли бот и нажали ли вы /start.")
+                    # 2. Отправка Telegram-уведомления с проверкой статуса
+                    if self.tg_enabled:
+                        # Проверяем статус отправки
+                        if not send_telegram_notification(name, start, end):
+                            QMessageBox.warning(self, "Ошибка Telegram",
+                                                f"Не удалось отправить уведомление о событии '{name}' в Telegram. "
+                                                "Возможно, вы не запустили бота командой /start.")
 
     def _send_windows_notification(self, title, time_s, time_e):
         """Отправка системного уведомления Windows."""
@@ -300,7 +357,6 @@ class SimplePlanner(QMainWindow):
                 timeout=10
             )
         except Exception as e:
-            # Используем print для ошибок в фоновом режиме, чтобы не блокировать GUI
             print(f"Не удалось отправить Windows уведомление: {e}")
 
     # -------------------------------------------------------------------
