@@ -3,8 +3,10 @@ import datetime
 import sqlite3
 from typing import Dict, List, Tuple
 
+from plyer import notification
+
 from PyQt6 import uic
-from PyQt6.QtCore import Qt, QDate, QTime
+from PyQt6.QtCore import Qt, QDate, QTime, QTimer
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QMessageBox, QTreeWidgetItem, QMenu, QTreeWidget
 )
@@ -39,6 +41,11 @@ class SimplePlanner(QMainWindow):
         self.current_importance = TASK_CATEGORIES[0]
 
         self._setup_tree_widgets()
+
+        self.last_alert_minute = -1
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.check_alerts)
+        self.timer.start(10000)
 
         self.addEventBtn.clicked.connect(self.add_event)
         self.searchEvent.textChanged.connect(self.update_event_list)
@@ -91,7 +98,9 @@ class SimplePlanner(QMainWindow):
 
         cursor = self.db.cursor()
 
-        cursor.execute("SELECT name, event_date, time_start, time_end FROM events ORDER BY event_date, time_start")
+        cursor.execute("SELECT name, event_date, time_start, time_end "
+                       "FROM events "
+                       "ORDER BY event_date, time_start")
         for name, event_date, time_start, time_end in cursor.fetchall():
             try:
                 date = datetime.datetime.strptime(event_date, "%Y-%m-%d").date()
@@ -104,7 +113,8 @@ class SimplePlanner(QMainWindow):
             except ValueError:
                 continue
 
-        cursor.execute("SELECT name, description, category FROM tasks")
+        cursor.execute("SELECT name, description, category "
+                       "FROM tasks")
         for name, desc, cat in cursor.fetchall():
             if cat in self.tasks:
                 self.tasks[cat].append((name, desc))
@@ -200,6 +210,38 @@ class SimplePlanner(QMainWindow):
                 if btn.text() == category_name:
                     btn.setChecked(True)
                     break
+
+    # -------------------------------------------------------------------
+    # ЛОГИКА УВЕДОМЛЕНИЙ
+    # -------------------------------------------------------------------
+
+    def check_alerts(self):
+        current_time = datetime.datetime.now().time()
+        current_date = datetime.date.today()
+
+        if self.last_alert_minute == current_time.minute:
+            return
+
+        self.last_alert_minute = current_time.minute
+
+        if current_date in self.events:
+            for event in self.events[current_date]:
+                name, start, end = event
+                if start.hour == current_time.hour and start.minute == current_time.minute:
+                    self.send_notification(name, start, end)
+
+    def send_notification(self, title, time_s, time_e):
+        time_s_str = time_s.strftime("%H:%M")
+        time_e_str = time_e.strftime("%H:%M")
+        try:
+            notification.notify(
+                title=f"Событие: {title}",
+                message=f"Запланировано событие на время: {time_s_str} - {time_e_str}",
+                app_name="Минипланировщик",
+                timeout=10
+            )
+        except Exception as e:
+            print(f'Ошибка при отправке уведомления: {e}')
 
     # -------------------------------------------------------------------
     # ЛОГИКА СОБЫТИЙ (Events)
@@ -366,7 +408,7 @@ class SimplePlanner(QMainWindow):
                 cursor = self.db.cursor()
                 cursor.execute('''
                     DELETE FROM tasks 
-                    WHERE name = ? AND description = ? AND category = ?''', (t_data[0],t_data[1], cat))
+                    WHERE name = ? AND description = ? AND category = ?''', (t_data[0], t_data[1], cat))
                 self.db.commit()
             except sqlite3.Error as e:
                 QMessageBox.critical(self, "Ошибка БД", f"Ошибка удаления задачи: {e}")
