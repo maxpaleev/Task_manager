@@ -41,6 +41,9 @@ async def cmd_id(message):
     db.close()
     await message.answer(str(tg_id))
 
+async def send_message(tg_id, text):
+    await bot.send_message(tg_id, text)
+
 async def main():
     await dp.start_polling(bot)
 
