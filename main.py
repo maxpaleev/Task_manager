@@ -12,8 +12,6 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QMessageBox, QTreeWidgetItem, QMenu, QTreeWidget, QInputDialog
 )
 
-# Импортируем run_bot_thread для запуска и send_notification (переименован) для отправки
-from tg_bot import run_bot_thread, send_notification as send_telegram_notification
 
 TASK_CATEGORIES = [
     "Срочно и важно",
@@ -45,8 +43,6 @@ class SimplePlanner(QMainWindow):
 
         self._init_db()
         self.load_data()
-        self._setup_bot_configuration()  # Настройка токена и запуск потока бота
-
         self.current_importance = TASK_CATEGORIES[0]
 
         self._setup_tree_widgets()
@@ -95,11 +91,6 @@ class SimplePlanner(QMainWindow):
     # ЛОГИКА БД И НАСТРОЙКИ БОТА (Оптимизация)
     # -------------------------------------------------------------------
 
-    def closeEvent(self, event):
-        if self.db:
-            self.db.close()
-        event.accept()
-
     def _init_db(self):
         """Инициализация обеих баз данных: planner.db и settings.db."""
         try:
@@ -127,67 +118,10 @@ class SimplePlanner(QMainWindow):
             for query in queries:
                 self._execute_query(query, commit=True)
 
-            # 2. settings.db
-            db_s = sqlite3.connect('settings.db')
-            cur_s = db_s.cursor()
-            cur_s.execute('''
-                            CREATE TABLE IF NOT EXISTS settings (
-                                id INTEGER PRIMARY KEY,
-                                tg_true TEXT NOT NULL,
-                                bot_token TEXT,
-                                telegram_id INTEGER
-                            )
-                            ''')
-            db_s.commit()
-            db_s.close()
 
         except sqlite3.Error as e:
             QMessageBox.critical(self, "Ошибка БД", f"Не удалось инициализировать базу данных: {e}")
             sys.exit(1)
-
-    def _setup_bot_configuration(self):
-        """Проверка токена бота, запрос у пользователя и запуск потока."""
-        db = sqlite3.connect('settings.db')
-        cur = db.cursor()
-        settings = cur.execute("SELECT bot_token, tg_true FROM settings").fetchone()
-
-        if not settings:
-            # Первый запуск: запрашиваем токен
-            token, ok = QInputDialog.getText(self, 'Настройка Telegram',
-                                             'Введите токен бота (@BotFather), если хотите уведомления. Оставьте пустым, если не хотите.')
-
-            if ok:
-                # Определяем статус (1 или 0)
-                tg_status = '1' if token.strip() else '0'
-                try:
-                    # Запись настроек
-                    cur.execute('INSERT INTO settings (bot_token, tg_true, telegram_id) VALUES (?, ?, ?)',
-                                (token.strip(), tg_status, None))
-                    db.commit()
-                    if tg_status == '1':
-                        QMessageBox.information(self, 'Успех',
-                                                'Токен сохранен. Для активации уведомлений напишите боту /start.')
-                    else:
-                        QMessageBox.information(self, 'Настройки', 'Telegram уведомления отключены.')
-                except sqlite3.Error:
-                    QMessageBox.warning(self, 'Ошибка', 'Не удалось сохранить токен.')
-
-                self.tg_enabled = int(tg_status)
-            else:
-                # Если нажата отмена, считать, что Telegram отключен
-                self.tg_enabled = 0
-        else:
-            # Настройки уже есть
-            token, tg_status = settings
-            self.tg_enabled = int(tg_status)
-
-        db.close()
-
-        # Запуск бота:
-        if self.tg_enabled:
-            # Используем run_bot_thread, который сам загрузит токен и ID
-            self.bot_thread = threading.Thread(target=run_bot_thread, daemon=True)
-            self.bot_thread.start()
 
     def load_data(self):
         self.events.clear()
@@ -248,7 +182,7 @@ class SimplePlanner(QMainWindow):
     # ЛОГИКА КОНТЕКСТНОГО МЕНЮ (Осталась без изменений)
     # -------------------------------------------------------------------
 
-    def show_context_menu(self, tree_widget: QTreeWidget, position):
+    def show_context_menu(self, tree_widget, position):
         item = tree_widget.itemAt(position)
         if not item:
             return
@@ -333,17 +267,8 @@ class SimplePlanner(QMainWindow):
             for event in self.events[current_date]:
                 name, start, end = event
                 if start.hour == current_time.hour and start.minute == current_time.minute:
-
-                    # 1. Отправка Windows-уведомления
                     self._send_windows_notification(name, start, end)
 
-                    # 2. Отправка Telegram-уведомления с проверкой статуса
-                    if self.tg_enabled:
-                        # Проверяем статус отправки
-                        if not send_telegram_notification(name, start, end):
-                            QMessageBox.warning(self, "Ошибка Telegram",
-                                                f"Не удалось отправить уведомление о событии '{name}' в Telegram. "
-                                                "Возможно, вы не запустили бота командой /start.")
 
     def _send_windows_notification(self, title, time_s, time_e):
         """Отправка системного уведомления Windows."""
