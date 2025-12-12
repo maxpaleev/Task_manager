@@ -6,8 +6,9 @@ class User(Base):
     __tablename__ = 'users'
 
     id = Column(Integer, primary_key=True)
-    telegram_id = Column(String, unique=True, index=True)
-    api_token = Column(String, unique=True, index=True)
+    # Сделано nullable=True, чтобы пользователь мог быть создан ботом до получения токена
+    telegram_id = Column(String, unique=True, index=True, nullable=True)
+    api_token = Column(String, unique=True, index=True, nullable=True) # Добавлено nullable=True
     link_code = Column(String, unique=True, nullable=True)
     events = relationship("Event", back_populates="owner")
 

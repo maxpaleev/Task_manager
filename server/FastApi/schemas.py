@@ -3,8 +3,7 @@ from datetime import datetime
 
 
 class EventCreate(BaseModel):
-    # Пока хардкодим, потом будем брать из токена
-    user_id: int
+    # user_id удален, так как теперь он берется из токена в API.
 
     # Текст напоминания
     text: str
@@ -21,3 +20,7 @@ class EventCreate(BaseModel):
         except ValueError:
             raise ValueError("Неверный формат даты/времени. Ожидается YYYY-MM-DD HH:MM:SS")
         return value
+
+
+class LinkCode(BaseModel):
+    code: str

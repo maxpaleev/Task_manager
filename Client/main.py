@@ -1,8 +1,12 @@
 import sys
 import datetime
 import sqlite3
+import threading
+import requests
+import json
 from typing import Dict, List, Tuple
 import requests
+from requests.exceptions import RequestException, HTTPError
 
 from plyer import notification
 
@@ -12,6 +16,8 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QMessageBox, QTreeWidgetItem, QMenu, QTreeWidget, QInputDialog
 )
 
+SERVER_URL = "http://127.0.0.1:8000"
+DB_FILE = 'planner.db'
 TASK_CATEGORIES = [
     "Срочно и важно",
     "Важно, но не срочно",
@@ -37,7 +43,6 @@ class SimplePlanner(QMainWindow):
         # Инициализация переменных
         self.events: Dict[datetime.date, List[Tuple[str, datetime.time, datetime.time]]] = {}
         self.tasks: Dict[str, List[Tuple[str, str]]] = {cat: [] for cat in TASK_CATEGORIES}
-        self.db = None
         self.tg_enabled = False  # Использовано более понятное имя
 
         self._init_db()
@@ -59,52 +64,72 @@ class SimplePlanner(QMainWindow):
         self.searchTask.textChanged.connect(self.update_task_list)
         self.importanceChoice.buttonClicked.connect(self._set_importance)
         self.taskDes.setMaxLength(100)
+        self.tgButton.clicked.connect(self.open_telegram_dialog)
 
     # -------------------------------------------------------------------
     # ОБЩИЙ МЕТОД ДЛЯ РАБОТЫ С БД
     # -------------------------------------------------------------------
 
     def _execute_query(self, query: str, params: Tuple = (), commit: bool = False, fetch_all: bool = False):
-        """Централизованное выполнение запросов к БД (planner.db) с обработкой ошибок."""
-        if not self.db:
-            QMessageBox.warning(self, "Предупреждение", "База данных (planner.db) не инициализирована.")
-            return
-
+        """
+        Централизованное выполнение запросов к БД.
+        Создает и закрывает соединение при каждом вызове, что делает его потокобезопасным.
+        """
+        conn = None
         try:
-            cursor = self.db.cursor()
+            # СОЗДАЕМ НОВОЕ СОЕДИНЕНИЕ В ТЕКУЩЕМ ПОТОКЕ
+            conn = sqlite3.connect(DB_FILE)
+            cursor = conn.cursor()
             cursor.execute(query, params)
 
             if commit:
-                self.db.commit()
+                conn.commit()
 
             if fetch_all:
                 return cursor.fetchall()
 
-            return True
+            return cursor  # Возвращаем курсор для получения lastrowid
 
         except sqlite3.Error as e:
-            QMessageBox.critical(self, "Ошибка БД", f"Ошибка выполнения запроса:\n{e}")
-            return False
+            # Для отладки в потоке:
+            print(f"Ошибка БД в потоке {threading.get_ident()}: {e}")
+            # ВАЖНО: Нельзя вызывать QMessageBox здесь, так как это не главный поток
+            return None
+        finally:
+            if conn:
+                conn.close()
 
     # -------------------------------------------------------------------
     # ЛОГИКА БД И НАСТРОЙКИ БОТА (Оптимизация)
     # -------------------------------------------------------------------
 
     def _init_db(self):
-        """Инициализация обеих баз данных: planner.db и settings.db."""
+        """Инициализация локальной базы данных SQLite."""
+        # Используем локальное соединение для инициализации
+        conn = None
         try:
-            # 1. planner.db
-            self.db = sqlite3.connect('planner.db')
-            queries = [
-                '''
+            conn = sqlite3.connect(DB_FILE)
+            cursor = conn.cursor()
+
+            # Обновленная таблица EVENTS с server_id
+            cursor.execute('''
                 CREATE TABLE IF NOT EXISTS events (
                     id INTEGER PRIMARY KEY,
                     name TEXT NOT NULL,
                     event_date TEXT NOT NULL,
                     time_start TEXT NOT NULL,
-                    time_end TEXT NOT NULL
+                    time_end TEXT NOT NULL,
+                    server_id INTEGER NULL
                 )
-                ''',
+            ''')
+
+            # Добавление server_id, если таблица существовала
+            try:
+                cursor.execute("ALTER TABLE events ADD COLUMN server_id INTEGER NULL")
+            except sqlite3.OperationalError:
+                pass
+
+            queries = [
                 '''
                 CREATE TABLE IF NOT EXISTS tasks (
                     id INTEGER PRIMARY KEY,
@@ -112,15 +137,26 @@ class SimplePlanner(QMainWindow):
                     description TEXT,
                     category TEXT NOT NULL
                 )
+                ''',
+                '''
+                CREATE TABLE IF NOT EXISTS settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT,
+                    tg_enabled INTEGER
+                )
                 '''
             ]
             for query in queries:
-                self._execute_query(query, commit=True)
+                conn.cursor().execute(query)  # Выполняем запросы
 
+            conn.commit()
 
         except sqlite3.Error as e:
             QMessageBox.critical(self, "Ошибка БД", f"Не удалось инициализировать базу данных: {e}")
             sys.exit(1)
+        finally:
+            if conn:
+                conn.close()
 
     def load_data(self):
         self.events.clear()
@@ -250,6 +286,94 @@ class SimplePlanner(QMainWindow):
                     break
 
     # -------------------------------------------------------------------
+    # ЛОГИКА Telegram
+    # -------------------------------------------------------------------
+
+    def _get_api_token(self) -> str | None:
+        """Извлекает сохраненный API токен из локальной БД."""
+        query = "SELECT value FROM settings WHERE key = 'api_token'"
+        cursor = self._execute_query(query, fetch_all=True)
+        return cursor[0][0]
+
+    def _save_api_token(self, token: str):
+        """Сохраняет полученный API токен в локальной БД."""
+        query = "INSERT OR REPLACE INTO settings (key, value) VALUES ('api_token', ?)"
+        self._execute_query(query, (token,), commit=True)
+        query = 'INSERT OR REPLACE INTO settings tg_enabled = 1 WHERE key = "api_token"'
+        self.tg_enabled = True  # Флаг: теперь синхронизировано
+
+    def open_telegram_dialog(self):
+        code, ok = QInputDialog.getText(self, "Связывание Telegram",
+                                        "Введите код, который вам прислал бот в Telegram:")
+        if ok and code:
+            threading.Thread(target=self._perform_link_request, args=(str(code),)).start()
+
+    def _perform_link_request(self, code: str):
+        """Отправляет код связывания на сервер и получает API-токен (в рабочем потоке)."""
+        url = f"{SERVER_URL}/auth/link"
+
+        try:
+            response = requests.post(url, json={"code": code})
+            response.raise_for_status()
+            data = response.json()
+
+            api_token = data.get("api_token")
+            if api_token:
+                self._save_api_token(api_token)  # БЕЗОПАСНЫЙ ВЫЗОВ
+                # Использование QTimer.singleShot для обновления UI из главного потока
+                QTimer.singleShot(0, lambda: [
+                    QMessageBox.information(self, "Успех", "Устройство успешно связано с Telegram!"),
+                    self.tgButton.setText("Telegram (Связан)")
+                ])
+            else:
+                QTimer.singleShot(0, lambda: QMessageBox.critical(
+                    self, "Ошибка связывания", "Сервер не вернул API-токен."))
+
+        except HTTPError as http_err:
+            try:
+                error_detail = http_err.response.json().get('detail', http_err.response.text)
+            except:
+                error_detail = http_err.response.text
+            QTimer.singleShot(0, lambda: QMessageBox.critical(
+                self, "Ошибка связывания", f"Ошибка сервера (HTTP {http_err.response.status_code}): {error_detail}"))
+
+        except RequestException as req_err:
+            QTimer.singleShot(0, lambda: QMessageBox.critical(
+                self, "Ошибка сети", f"Не удалось подключиться к серверу: {req_err}"))
+
+    def _send_to_server_thread(self, payload: dict, local_id: int):
+        """Выполняет запрос на сервер с авторизацией и сохранением server_id (в рабочем потоке)."""
+
+        token = self._get_api_token()  # БЕЗОПАСНЫЙ ВЫЗОВ
+        if not token:
+            print("Telegram не настроен, пропускаем синхронизацию.")
+            return
+
+        headers = {'Authorization': f'Bearer {token}'}  # Используем Bearer токен
+        url = f"{SERVER_URL}/events"
+
+        try:
+            response = requests.post(url, json=payload, headers=headers)
+            response.raise_for_status()
+            data = response.json()
+
+            server_id = data.get('id')
+
+            if server_id:
+                # Обновляем локальную запись, используя локальный ID (БЕЗОПАСНЫЙ ВЫЗОВ)
+                query = '''
+                    UPDATE events 
+                    SET server_id = ? 
+                    WHERE id = ?
+                '''
+                params = (server_id, local_id)
+                self._execute_query(query, params, commit=True)
+                print(f"Событие синхронизировано, server_id: {server_id} для local_id: {local_id}")
+
+        except RequestException as req_err:
+            print(f"Не удалось подключиться к серверу для синхронизации local_id={local_id}: {req_err}")
+
+    # -------------------------------------------------------------------
     # ЛОГИКА УВЕДОМЛЕНИЙ (Обновлено)
     # -------------------------------------------------------------------
 
@@ -304,41 +428,50 @@ class SimplePlanner(QMainWindow):
         start_str = start_py.strftime("%H:%M:%S")
         end_str = end_py.strftime("%H:%M:%S")
 
+        # 1. Сохранение локально и получение local_id
+        query = '''
+                    INSERT INTO events (name, event_date, time_start, time_end, server_id) 
+                    VALUES (?, ?, ?, ?, NULL)
+                '''
+        params = (name, date_str, start_str, end_str)
+        cursor = self._execute_query(query, params, commit=True)
+        local_id = cursor.lastrowid if cursor else None  # Получаем ID только что вставленной записи
 
+        if not local_id:
+            QMessageBox.critical(self, "Ошибка", "Не удалось сохранить событие локально.")
+            return
 
-        # Отправка на сервер
-        selected_date: QDate = self.calendarWidget.selectedDate()
-        selected_time: QTime = self.timeStart.time()
+        # 2. Подготовка и отправка на сервер (ТОЛЬКО если Telegram включен)
+        query = 'SELECT tg_enabled FROM settings WHERE key = "api_token"'
+        cursor = self._execute_query(query, fetch_all=True)
+        self.tg_enabled = (cursor[0][0])
+        if self.tg_enabled and self._get_api_token():
 
-        py_date = datetime.datetime(selected_date.year(), selected_date.month(), selected_date.day(),selected_time.hour(), selected_time.minute(), selected_time.second())
-        notify_at_str = py_date.strftime("%Y-%m-%d %H:%M:%S")
-        print(type(notify_at_str))
+            selected_date: QDate = self.calendarWidget.selectedDate()
+            selected_time_start: QTime = self.timeStart.time()
 
-        payload = {
-            'user_id': 1,
-            'text': f'У вас запланировано событие {name} на {start_str} - {end_str}',
-            'notify_at_str': notify_at_str
-        }
+            py_datetime = datetime.datetime(
+                selected_date.year(), selected_date.month(), selected_date.day(),
+                selected_time_start.hour(), selected_time_start.minute(), selected_time_start.second()
+            )
+            notify_at_str = py_datetime.strftime("%Y-%m-%d %H:%M:%S")
 
-        try:
-            response = requests.post('http://127.0.0.1:8000/events', json=payload)
-            response.raise_for_status()
-            QMessageBox.information(self, "Уведомление", "Уведомление успешно отправлено!")
-        except requests.exceptions.RequestException as e:
-            QMessageBox.warning(self, "Ошибка", f"Не удалось отправить уведомление: {e}")
+            payload = {
+                'text': f'У вас запланировано событие {name} на {start_str} - {end_str}',
+                'notify_at_str': notify_at_str
+            }
 
+            # Запуск синхронизации в потоке
+            threading.Thread(target=self._send_to_server_thread, args=(payload, local_id)).start()
+        else:
+            QMessageBox.information(self, "Сохранено",
+                                    "Событие сохранено локально. Для синхронизации свяжите Telegram.")
 
-        success = self._execute_query(
-            '''INSERT INTO events (name, event_date, time_start, time_end) VALUES (?, ?, ?, ?)''',
-            (name, date_str, start_str, end_str),
-            commit=True
-        )
-
-        if success:
-            self.eventName.clear()
-            self.timeStart.setTime(QTime(0, 0))
-            self.timeEnd.setTime(QTime(0, 0))
-            self.load_data()
+        # 3. Обновление UI
+        self.eventName.clear()
+        self.timeStart.setTime(QTime(0, 0))
+        self.timeEnd.setTime(QTime(0, 0))
+        self.load_data()
 
     def update_event_list(self):
         search = self.searchEvent.text().lower()

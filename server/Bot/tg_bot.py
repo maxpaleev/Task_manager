@@ -1,32 +1,59 @@
-import asyncio
-import logging
-import sqlite3
+import random
+import string
 
-from aiogram import Bot, Dispatcher
-from aiogram.filters.command import Command
+from aiogram import Router, types
+from aiogram.filters import Command
 
-BOT_TOKEN = "5921569584:AAEKfppjMRD1XEa80skgufMaZKEwS9iQKRU"
+from sqlalchemy.orm import Session
+from DB.database import SessionLocal
+from DB.models import User
 
-logging.basicConfig(level=logging.INFO)
-
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
+router = Router()
 
 
-
-@dp.message(Command("start"))
-async def start(message):
-    tg_id = message.from_user.id
-    print(type(tg_id))
-    await message.answer("Hello, world! ID: " + str(tg_id))
-
-
-async def send_message(tg_id, text):
-    await bot.send_message(tg_id, text)
-
-async def main():
-    await dp.start_polling(bot)
+def get_db():
+    db = SessionLocal()
+    try:
+        return db
+    finally:
+        db.close()
 
 
-if __name__ == "__main__":
-    asyncio.run(main())
+def generate_random_code(length=6):
+    return ''.join(random.choices(string.digits, k=length))
+
+
+@router.message(Command("start", "link"))
+async def start(message: types.Message):
+    if not message.from_user:
+        return
+
+    db = get_db()
+    telegram_id = str(message.from_user.id)
+
+    user = db.query(User).filter(User.telegram_id == telegram_id).first()
+    link_code = generate_random_code()
+
+    if user:
+        if user.api_token:
+            await message.answer("Ваше устройство уже связано! Генерирую новый код для перепривязки.")
+
+        user.link_code = link_code
+        db.commit()
+
+    else:
+        new_user = User(
+            telegram_id=telegram_id,
+            link_code=link_code
+        )
+        db.add(new_user)
+        db.commit()
+
+    response_text = (
+        "🔗 **Связывание устройства**\n\n"
+        "1. Откройте настройки Telegram в вашей программе на ПК.\n"
+        "2. Введите этот уникальный код:\n\n"
+        f"**`{link_code}`**\n\n"
+        "Код действителен 15 минут."
+    )
+    await message.answer(response_text, parse_mode="Markdown")

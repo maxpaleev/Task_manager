@@ -254,6 +254,24 @@
         </item>
        </layout>
       </widget>
+      <widget class="QWidget" name="tab">
+       <attribute name="title">
+        <string>Настройки</string>
+       </attribute>
+       <widget class="QPushButton" name="tgButton">
+        <property name="geometry">
+         <rect>
+          <x>370</x>
+          <y>150</y>
+          <width>75</width>
+          <height>23</height>
+         </rect>
+        </property>
+        <property name="text">
+         <string>Связать с TG</string>
+        </property>
+       </widget>
+      </widget>
      </widget>
     </item>
    </layout>
