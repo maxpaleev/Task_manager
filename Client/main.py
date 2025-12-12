@@ -1,8 +1,8 @@
 import sys
 import datetime
 import sqlite3
-import threading
 from typing import Dict, List, Tuple
+import requests
 
 from plyer import notification
 
@@ -11,7 +11,6 @@ from PyQt6.QtCore import Qt, QDate, QTime, QTimer
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QMessageBox, QTreeWidgetItem, QMenu, QTreeWidget, QInputDialog
 )
-
 
 TASK_CATEGORIES = [
     "Срочно и важно",
@@ -28,7 +27,7 @@ class SimplePlanner(QMainWindow):
 
         # Загрузка интерфейса из файла
         try:
-            uic.loadUi('design_test.ui', self)
+            uic.loadUi('Client/design_test.ui', self)
         except Exception as e:
             QMessageBox.critical(self, "Ошибка", f"Не удалось загрузить интерфейс (design_test.ui): {e}")
             sys.exit(1)
@@ -269,7 +268,6 @@ class SimplePlanner(QMainWindow):
                 if start.hour == current_time.hour and start.minute == current_time.minute:
                     self._send_windows_notification(name, start, end)
 
-
     def _send_windows_notification(self, title, time_s, time_e):
         """Отправка системного уведомления Windows."""
         time_s_str = time_s.strftime("%H:%M")
@@ -305,6 +303,30 @@ class SimplePlanner(QMainWindow):
         date_str = date_py.strftime("%Y-%m-%d")
         start_str = start_py.strftime("%H:%M:%S")
         end_str = end_py.strftime("%H:%M:%S")
+
+
+
+        # Отправка на сервер
+        selected_date: QDate = self.calendarWidget.selectedDate()
+        selected_time: QTime = self.timeStart.time()
+
+        py_date = datetime.datetime(selected_date.year(), selected_date.month(), selected_date.day(),selected_time.hour(), selected_time.minute(), selected_time.second())
+        notify_at_str = py_date.strftime("%Y-%m-%d %H:%M:%S")
+        print(type(notify_at_str))
+
+        payload = {
+            'user_id': 1,
+            'text': f'У вас запланировано событие {name} на {start_str} - {end_str}',
+            'notify_at_str': notify_at_str
+        }
+
+        try:
+            response = requests.post('http://127.0.0.1:8000/events', json=payload)
+            response.raise_for_status()
+            QMessageBox.information(self, "Уведомление", "Уведомление успешно отправлено!")
+        except requests.exceptions.RequestException as e:
+            QMessageBox.warning(self, "Ошибка", f"Не удалось отправить уведомление: {e}")
+
 
         success = self._execute_query(
             '''INSERT INTO events (name, event_date, time_start, time_end) VALUES (?, ?, ?, ?)''',
