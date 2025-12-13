@@ -1,17 +1,15 @@
 import sys
 import datetime
 import sqlite3
-import threading
 import requests
 import json
 from typing import Dict, List, Tuple
-import requests
 from requests.exceptions import RequestException, HTTPError
 
 from plyer import notification
 
 from PyQt6 import uic
-from PyQt6.QtCore import Qt, QDate, QTime, QTimer
+from PyQt6.QtCore import Qt, QDate, QTime, QTimer, QThread, pyqtSignal, QObject
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QMessageBox, QTreeWidgetItem, QMenu, QTreeWidget, QInputDialog
 )
@@ -26,6 +24,46 @@ TASK_CATEGORIES = [
 ]
 
 
+# --- НОВОЕ: Класс для безопасной работы с сетью ---
+class NetworkWorker(QObject):
+    finished = pyqtSignal(dict)  # Сигнал успеха
+    error = pyqtSignal(str)  # Сигнал ошибки
+
+    def __init__(self, url, method="POST", payload=None, token=None):
+        super().__init__()
+        self.url = url
+        self.method = method
+        self.payload = payload
+        self.token = token
+
+    def run(self):
+        headers = {}
+        if self.token:
+            headers['Authorization'] = f'Bearer {self.token}'
+
+        try:
+            if self.method == "POST":
+                response = requests.post(self.url, json=self.payload, headers=headers)
+            else:
+                response = requests.get(self.url, headers=headers)
+
+            response.raise_for_status()
+            try:
+                data = response.json()
+            except:
+                data = {}
+            self.finished.emit(data)
+
+        except HTTPError as http_err:
+            try:
+                detail = http_err.response.json().get('detail', http_err.response.text)
+            except:
+                detail = str(http_err)
+            self.error.emit(f"Ошибка сервера: {detail}")
+        except Exception as e:
+            self.error.emit(f"Ошибка сети: {str(e)}")
+
+
 class SimplePlanner(QMainWindow):
 
     def __init__(self):
@@ -35,15 +73,19 @@ class SimplePlanner(QMainWindow):
         try:
             uic.loadUi('Client/design_test.ui', self)
         except Exception as e:
-            QMessageBox.critical(self, "Ошибка", f"Не удалось загрузить интерфейс (design_test.ui): {e}")
-            sys.exit(1)
+            # Если папка Client не найдена, ищем рядом
+            try:
+                uic.loadUi('design_test.ui', self)
+            except:
+                QMessageBox.critical(self, "Ошибка", f"Не удалось загрузить интерфейс: {e}")
+                sys.exit(1)
 
         self.setWindowTitle('Минипланировщик')
 
-        # Инициализация переменных
+        # Инициализация переменных (ТВОЙ КОД)
         self.events: Dict[datetime.date, List[Tuple[str, datetime.time, datetime.time]]] = {}
         self.tasks: Dict[str, List[Tuple[str, str]]] = {cat: [] for cat in TASK_CATEGORIES}
-        self.tg_enabled = False  # Использовано более понятное имя
+        self.tg_enabled = False
 
         self._init_db()
         self.load_data()
@@ -51,13 +93,13 @@ class SimplePlanner(QMainWindow):
 
         self._setup_tree_widgets()
 
-        # Инициализация таймера для проверки уведомлений
+        # Инициализация таймера (ТВОЙ КОД)
         self.last_alert_minute = -1
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.check_alerts)
-        self.timer.start(5000)  # Проверка каждые 5 секунд
+        self.timer.start(5000)
 
-        # Соединение сигналов
+        # Соединение сигналов (ТВОЙ КОД)
         self.addEventBtn.clicked.connect(self.add_event)
         self.searchEvent.textChanged.connect(self.update_event_list)
         self.taskButton.clicked.connect(self.add_task)
@@ -67,17 +109,12 @@ class SimplePlanner(QMainWindow):
         self.tgButton.clicked.connect(self.open_telegram_dialog)
 
     # -------------------------------------------------------------------
-    # ОБЩИЙ МЕТОД ДЛЯ РАБОТЫ С БД
+    # ОБЩИЙ МЕТОД ДЛЯ РАБОТЫ С БД (ТВОЙ КОД)
     # -------------------------------------------------------------------
 
     def _execute_query(self, query: str, params: Tuple = (), commit: bool = False, fetch_all: bool = False):
-        """
-        Централизованное выполнение запросов к БД.
-        Создает и закрывает соединение при каждом вызове, что делает его потокобезопасным.
-        """
         conn = None
         try:
-            # СОЗДАЕМ НОВОЕ СОЕДИНЕНИЕ В ТЕКУЩЕМ ПОТОКЕ
             conn = sqlite3.connect(DB_FILE)
             cursor = conn.cursor()
             cursor.execute(query, params)
@@ -88,30 +125,26 @@ class SimplePlanner(QMainWindow):
             if fetch_all:
                 return cursor.fetchall()
 
-            return cursor  # Возвращаем курсор для получения lastrowid
+            return cursor
 
         except sqlite3.Error as e:
-            # Для отладки в потоке:
-            print(f"Ошибка БД в потоке {threading.get_ident()}: {e}")
-            # ВАЖНО: Нельзя вызывать QMessageBox здесь, так как это не главный поток
+            print(f"Ошибка БД: {e}")
             return None
         finally:
             if conn:
                 conn.close()
 
     # -------------------------------------------------------------------
-    # ЛОГИКА БД И НАСТРОЙКИ БОТА (Оптимизация)
+    # ЛОГИКА БД (ТВОЙ КОД)
     # -------------------------------------------------------------------
 
     def _init_db(self):
         """Инициализация локальной базы данных SQLite."""
-        # Используем локальное соединение для инициализации
         conn = None
         try:
             conn = sqlite3.connect(DB_FILE)
             cursor = conn.cursor()
 
-            # Обновленная таблица EVENTS с server_id
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS events (
                     id INTEGER PRIMARY KEY,
@@ -123,7 +156,6 @@ class SimplePlanner(QMainWindow):
                 )
             ''')
 
-            # Добавление server_id, если таблица существовала
             try:
                 cursor.execute("ALTER TABLE events ADD COLUMN server_id INTEGER NULL")
             except sqlite3.OperationalError:
@@ -147,7 +179,7 @@ class SimplePlanner(QMainWindow):
                 '''
             ]
             for query in queries:
-                conn.cursor().execute(query)  # Выполняем запросы
+                cursor.execute(query)
 
             conn.commit()
 
@@ -163,7 +195,6 @@ class SimplePlanner(QMainWindow):
         for category in TASK_CATEGORIES:
             self.tasks[category] = []
 
-        # Загрузка событий
         event_rows = self._execute_query(
             "SELECT name, event_date, time_start, time_end FROM events ORDER BY event_date, time_start",
             fetch_all=True
@@ -181,7 +212,6 @@ class SimplePlanner(QMainWindow):
                 except ValueError:
                     continue
 
-        # Загрузка задач
         task_rows = self._execute_query(
             "SELECT name, description, category FROM tasks",
             fetch_all=True
@@ -195,7 +225,7 @@ class SimplePlanner(QMainWindow):
         self.update_task_list()
 
     # -------------------------------------------------------------------
-    # ЛОГИКА ДЕРЕВЬЕВ
+    # ЛОГИКА ДЕРЕВЬЕВ (ТВОЙ КОД)
     # -------------------------------------------------------------------
 
     def _setup_tree_widgets(self):
@@ -212,10 +242,6 @@ class SimplePlanner(QMainWindow):
         self.taskList.customContextMenuRequested.connect(
             lambda pos: self.show_context_menu(self.taskList, pos)
         )
-
-    # -------------------------------------------------------------------
-    # ЛОГИКА КОНТЕКСТНОГО МЕНЮ (Осталась без изменений)
-    # -------------------------------------------------------------------
 
     def show_context_menu(self, tree_widget, position):
         item = tree_widget.itemAt(position)
@@ -286,95 +312,65 @@ class SimplePlanner(QMainWindow):
                     break
 
     # -------------------------------------------------------------------
-    # ЛОГИКА Telegram
+    # ЛОГИКА Telegram (ОБНОВЛЕНА БЕЗОПАСНО)
     # -------------------------------------------------------------------
 
     def _get_api_token(self) -> str | None:
-        """Извлекает сохраненный API токен из локальной БД."""
         query = "SELECT value FROM settings WHERE key = 'api_token'"
         cursor = self._execute_query(query, fetch_all=True)
-        return cursor[0][0]
+        return cursor[0][0] if cursor else None
 
     def _save_api_token(self, token: str):
-        """Сохраняет полученный API токен в локальной БД."""
         query = "INSERT OR REPLACE INTO settings (key, value) VALUES ('api_token', ?)"
         self._execute_query(query, (token,), commit=True)
-        query = 'INSERT OR REPLACE INTO settings tg_enabled = 1 WHERE key = "api_token"'
-        self.tg_enabled = True  # Флаг: теперь синхронизировано
+        # Доп запрос для флага, если нужно
+        self._execute_query("UPDATE settings SET tg_enabled = 1 WHERE key = 'api_token'", commit=True)
+        self.tg_enabled = True
+
+    def _run_worker(self, url, payload, on_success):
+        """Вспомогательный метод для запуска потока"""
+        self.thread = QThread()
+        self.worker = NetworkWorker(url, payload=payload)
+        self.worker.moveToThread(self.thread)
+
+        self.thread.started.connect(self.worker.run)
+        self.worker.finished.connect(on_success)
+        self.worker.error.connect(lambda err: QMessageBox.warning(self, "Ошибка сети", err))
+
+        # Очистка
+        self.worker.finished.connect(self.thread.quit)
+        self.worker.finished.connect(self.worker.deleteLater)
+        self.thread.finished.connect(self.thread.deleteLater)
+
+        self.thread.start()
 
     def open_telegram_dialog(self):
         code, ok = QInputDialog.getText(self, "Связывание Telegram",
                                         "Введите код, который вам прислал бот в Telegram:")
         if ok and code:
-            threading.Thread(target=self._perform_link_request, args=(str(code),)).start()
+            self.tgButton.setEnabled(False)
+            self.tgButton.setText("Загрузка...")
 
-    def _perform_link_request(self, code: str):
-        """Отправляет код связывания на сервер и получает API-токен (в рабочем потоке)."""
-        url = f"{SERVER_URL}/auth/link"
+            # ЗАПУСК ЧЕРЕЗ WORKER (вместо threading)
+            self._run_worker(
+                url=f"{SERVER_URL}/auth/link",
+                payload={"code": str(code)},
+                on_success=self._on_link_success
+            )
 
-        try:
-            response = requests.post(url, json={"code": code})
-            response.raise_for_status()
-            data = response.json()
-
-            api_token = data.get("api_token")
-            if api_token:
-                self._save_api_token(api_token)  # БЕЗОПАСНЫЙ ВЫЗОВ
-                # Использование QTimer.singleShot для обновления UI из главного потока
-                QTimer.singleShot(0, lambda: [
-                    QMessageBox.information(self, "Успех", "Устройство успешно связано с Telegram!"),
-                    self.tgButton.setText("Telegram (Связан)")
-                ])
-            else:
-                QTimer.singleShot(0, lambda: QMessageBox.critical(
-                    self, "Ошибка связывания", "Сервер не вернул API-токен."))
-
-        except HTTPError as http_err:
-            try:
-                error_detail = http_err.response.json().get('detail', http_err.response.text)
-            except:
-                error_detail = http_err.response.text
-            QTimer.singleShot(0, lambda: QMessageBox.critical(
-                self, "Ошибка связывания", f"Ошибка сервера (HTTP {http_err.response.status_code}): {error_detail}"))
-
-        except RequestException as req_err:
-            QTimer.singleShot(0, lambda: QMessageBox.critical(
-                self, "Ошибка сети", f"Не удалось подключиться к серверу: {req_err}"))
-
-    def _send_to_server_thread(self, payload: dict, local_id: int):
-        """Выполняет запрос на сервер с авторизацией и сохранением server_id (в рабочем потоке)."""
-
-        token = self._get_api_token()  # БЕЗОПАСНЫЙ ВЫЗОВ
-        if not token:
-            print("Telegram не настроен, пропускаем синхронизацию.")
-            return
-
-        headers = {'Authorization': f'Bearer {token}'}  # Используем Bearer токен
-        url = f"{SERVER_URL}/events"
-
-        try:
-            response = requests.post(url, json=payload, headers=headers)
-            response.raise_for_status()
-            data = response.json()
-
-            server_id = data.get('id')
-
-            if server_id:
-                # Обновляем локальную запись, используя локальный ID (БЕЗОПАСНЫЙ ВЫЗОВ)
-                query = '''
-                    UPDATE events 
-                    SET server_id = ? 
-                    WHERE id = ?
-                '''
-                params = (server_id, local_id)
-                self._execute_query(query, params, commit=True)
-                print(f"Событие синхронизировано, server_id: {server_id} для local_id: {local_id}")
-
-        except RequestException as req_err:
-            print(f"Не удалось подключиться к серверу для синхронизации local_id={local_id}: {req_err}")
+    def _on_link_success(self, data):
+        """Слот при успешном связывании"""
+        api_token = data.get("api_token")
+        if api_token:
+            self._save_api_token(api_token)
+            QMessageBox.information(self, "Успех", "Устройство успешно связано с Telegram!")
+            self.tgButton.setText("Telegram (Связан)")
+        else:
+            QMessageBox.critical(self, "Ошибка", "Сервер не вернул токен.")
+        self.tgButton.setEnabled(True)
 
     # -------------------------------------------------------------------
-    # ЛОГИКА УВЕДОМЛЕНИЙ (Обновлено)
+    # ЛОГИКА УВЕДОМЛЕНИЙ (ТВОЙ КОД)
     # -------------------------------------------------------------------
 
     def check_alerts(self):
@@ -393,7 +389,6 @@ class SimplePlanner(QMainWindow):
                     self._send_windows_notification(name, start, end)
 
     def _send_windows_notification(self, title, time_s, time_e):
-        """Отправка системного уведомления Windows."""
         time_s_str = time_s.strftime("%H:%M")
         time_e_str = time_e.strftime("%H:%M")
         try:
@@ -407,7 +402,7 @@ class SimplePlanner(QMainWindow):
             print(f"Не удалось отправить Windows уведомление: {e}")
 
     # -------------------------------------------------------------------
-    # ЛОГИКА СОБЫТИЙ (Events)
+    # ЛОГИКА СОБЫТИЙ (ОБНОВЛЕНО ТОЛЬКО ОТПРАВКА)
     # -------------------------------------------------------------------
 
     def add_event(self):
@@ -428,50 +423,68 @@ class SimplePlanner(QMainWindow):
         start_str = start_py.strftime("%H:%M:%S")
         end_str = end_py.strftime("%H:%M:%S")
 
-        # 1. Сохранение локально и получение local_id
+        # 1. Сохранение локально (ТВОЙ КОД)
         query = '''
                     INSERT INTO events (name, event_date, time_start, time_end, server_id) 
                     VALUES (?, ?, ?, ?, NULL)
                 '''
         params = (name, date_str, start_str, end_str)
         cursor = self._execute_query(query, params, commit=True)
-        local_id = cursor.lastrowid if cursor else None  # Получаем ID только что вставленной записи
+        local_id = cursor.lastrowid if cursor else None
 
         if not local_id:
             QMessageBox.critical(self, "Ошибка", "Не удалось сохранить событие локально.")
             return
 
-        # 2. Подготовка и отправка на сервер (ТОЛЬКО если Telegram включен)
-        query = 'SELECT tg_enabled FROM settings WHERE key = "api_token"'
-        cursor = self._execute_query(query, fetch_all=True)
-        self.tg_enabled = (cursor[0][0])
-        if self.tg_enabled and self._get_api_token():
-
-            selected_date: QDate = self.calendarWidget.selectedDate()
-            selected_time_start: QTime = self.timeStart.time()
-
+        # 2. Подготовка и отправка на сервер (ЧЕРЕЗ WORKER)
+        token = self._get_api_token()
+        if token:
+            # Получаем полный datetime для сервера
+            selected_date = self.calendarWidget.selectedDate()
+            selected_time_start = self.timeStart.time()
             py_datetime = datetime.datetime(
                 selected_date.year(), selected_date.month(), selected_date.day(),
                 selected_time_start.hour(), selected_time_start.minute(), selected_time_start.second()
             )
+            # Внимание: здесь используем тот формат, который ждет твой schema.py
             notify_at_str = py_datetime.strftime("%Y-%m-%d %H:%M:%S")
 
             payload = {
-                'text': f'У вас запланировано событие {name} на {start_str} - {end_str}',
-                'notify_at_str': notify_at_str
+                'text': f'Событие: {name} ({start_str} - {end_str})',
+                'notify_at': notify_at_str
             }
 
-            # Запуск синхронизации в потоке
-            threading.Thread(target=self._send_to_server_thread, args=(payload, local_id)).start()
-        else:
-            QMessageBox.information(self, "Сохранено",
-                                    "Событие сохранено локально. Для синхронизации свяжите Telegram.")
+            # Создаем поток для отправки события
+            self.event_thread = QThread()
+            self.event_worker = NetworkWorker(f"{SERVER_URL}/events", payload=payload, token=token)
+            self.event_worker.moveToThread(self.event_thread)
 
-        # 3. Обновление UI
+            # При успехе обновляем server_id в БД
+            self.event_thread.started.connect(self.event_worker.run)
+            self.event_worker.finished.connect(lambda res: self._on_event_sent(res, local_id))
+
+            # Очистка
+            self.event_worker.finished.connect(self.event_thread.quit)
+            self.event_worker.finished.connect(self.event_worker.deleteLater)
+            self.event_thread.finished.connect(self.event_thread.deleteLater)
+            self.event_thread.start()
+
+        else:
+            QMessageBox.information(self, "Сохранено", "Событие сохранено локально.")
+
+        # 3. Обновление UI (ТВОЙ КОД)
         self.eventName.clear()
         self.timeStart.setTime(QTime(0, 0))
         self.timeEnd.setTime(QTime(0, 0))
         self.load_data()
+
+    def _on_event_sent(self, response, local_id):
+        """Обновляем server_id после успешной отправки"""
+        server_id = response.get('id')
+        if server_id:
+            query = "UPDATE events SET server_id = ? WHERE id = ?"
+            self._execute_query(query, (server_id, local_id), commit=True)
+            print(f"Синхронизировано: local={local_id}, server={server_id}")
 
     def update_event_list(self):
         search = self.searchEvent.text().lower()
@@ -528,7 +541,7 @@ class SimplePlanner(QMainWindow):
         self.load_data()
 
     # ------------------------------------------------------------------
-    # ЛОГИКА ЗАДАЧ (Tasks)
+    # ЛОГИКА ЗАДАЧ (Tasks) - ОСТАЛАСЬ БЕЗ ИЗМЕНЕНИЙ
     # ------------------------------------------------------------------
 
     def _set_importance(self, button):
@@ -584,16 +597,13 @@ class SimplePlanner(QMainWindow):
 
     def _delete_task_logic(self, item):
         if item.parent():
-            # Удаление конкретной задачи
             cat = item.parent().data(0, Qt.ItemDataRole.UserRole)
             t_data = item.data(0, Qt.ItemDataRole.UserRole)
 
             query = '''DELETE FROM tasks WHERE name = ? AND description = ? AND category = ?'''
             params = (t_data[0], t_data[1], cat)
         else:
-            # Удаление всех задач в категории
             cat = item.data(0, Qt.ItemDataRole.UserRole)
-
             query = '''DELETE FROM tasks WHERE category = ?'''
             params = (cat,)
 

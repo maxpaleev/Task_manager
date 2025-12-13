@@ -57,17 +57,11 @@ def add_event(
         current_user: User = AuthenticatedUser,  # Получаем пользователя из токена
         db: Session = Depends(get_db)):
     # ИСПРАВЛЕНО: user_id берется из аутентифицированного пользователя
-    user_id = current_user.id
-
-    try:
-        notify_datatime = datetime.strptime(event_data.notify_at_str, "%Y-%m-%d %H:%M:%S")
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid date format. Please use YYYY-MM-DD HH:MM:SS")
 
     new_event = Event(
-        user_id=user_id,  # ИСПРАВЛЕНО
+        user_id=current_user.id,  # ИСПРАВЛЕНО
         text=event_data.text,
-        start_time=notify_datatime,
+        start_time=event_data.notify_at,
         is_sent=False
     )
 
