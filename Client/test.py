@@ -1,8 +1,9 @@
 import requests
 
-tg_id = 1347477792
-message = ('hello\n'
-           'world')
+token = "041bd4ef-4da8-4569-8fe9-56ef7d9cb18c"
 
-url = f"http://127.0.0.1:8000/items/{tg_id}?q={message}"
-response = requests.get(url)
+headers = {}
+headers['Authorization'] = f'Bearer {token}'
+
+url = f"http://127.0.0.1:8000/events/{41}"
+response = requests.delete(url, headers=headers, timeout=10)

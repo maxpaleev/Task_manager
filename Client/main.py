@@ -44,6 +44,8 @@ class NetworkWorker(QObject):
         try:
             if self.method == "POST":
                 response = requests.post(self.url, json=self.payload, headers=headers)
+            elif self.method == "DELETE":
+                response = requests.delete(self.url, headers=headers, timeout=10)
             else:
                 response = requests.get(self.url, headers=headers)
 
@@ -518,7 +520,9 @@ class SimplePlanner(QMainWindow):
 
     def _delete_event_logic(self, item):
         if item.parent():
-            # Удаление конкретного события
+            # --- Удаление конкретного события ---
+
+            # Получаем данные события
             date_key = item.parent().data(0, Qt.ItemDataRole.UserRole)
             ev_data = item.data(0, Qt.ItemDataRole.UserRole)
             name, start_time, end_time = ev_data
@@ -527,18 +531,62 @@ class SimplePlanner(QMainWindow):
             start_str = start_time.strftime("%H:%M:%S")
             end_str = end_time.strftime("%H:%M:%S")
 
-            query = '''DELETE FROM events WHERE name = ? AND event_date = ? AND time_start = ? AND time_end = ?'''
-            params = (name, date_str, start_str, end_str)
+            # 1. Получаем server_id из локальной БД (ДО удаления!)
+            query_select = '''
+                SELECT server_id FROM events 
+                WHERE name = ? AND event_date = ? AND time_start = ? AND time_end = ?
+            '''
+            params_select = (name, date_str, start_str, end_str)
+
+            result = self._execute_query(query_select, params_select, fetch_all=True)
+
+            # Извлекаем server_id
+            server_id_to_delete = result[0][0] if result and result[0] and result[0][0] else None
+
+            # 2. Локальное удаление
+            query_delete = '''
+                DELETE FROM events 
+                WHERE name = ? AND event_date = ? AND time_start = ? AND time_end = ?
+            '''
+            self._execute_query(query_delete, params_select, commit=True)
+            self.load_data()  # Обновляем UI сразу же, чтобы удаление казалось мгновенным
+
+            # 3. Если есть server_id и токен, запускаем синхронизацию на сервере
+            token = self._get_api_token()
+            if server_id_to_delete and token:
+                # Блокируем кнопку, чтобы избежать повторного нажатия (опционально)
+                # ВАЖНО: Создаем НОВЫЕ worker и thread, как в вашем стиле,
+                # но для безопасности используем локальные переменные
+                self.thread = QThread()
+                self.worker = NetworkWorker(
+                    url=f"{SERVER_URL}/events/{server_id_to_delete}",
+                    method="DELETE",  # Используем метод DELETE
+                    token=token
+                )
+
+                self.worker.moveToThread(self.thread)
+                self.thread.started.connect(self.worker.run)
+
+
+                # Безопасная очистка (как в предыдущих рекомендациях)
+                self.worker.finished.connect(self.thread.quit)
+                self.worker.finished.connect(self.worker.deleteLater)
+                self.thread.finished.connect(self.thread.deleteLater)
+                self.worker.error.connect(self.thread.quit)  # Очистка при ошибке
+                self.worker.error.connect(self.worker.deleteLater)
+                self.thread.finished.connect(self.thread.deleteLater)
+
+                self.thread.start()
+
         else:
-            # Удаление всех событий за день
+            # --- Удаление всех событий за день (без синхронизации) ---
+            QMessageBox.information(self, "Внимание", "При удалении целого дня, удаление происходит только локально.")
             date_key = item.data(0, Qt.ItemDataRole.UserRole)
             date_str = date_key.strftime("%Y-%m-%d")
 
-            query = '''DELETE FROM events WHERE event_date = ?'''
-            params = (date_str,)
-
-        self._execute_query(query, params, commit=True)
-        self.load_data()
+            query_delete_all = '''DELETE FROM events WHERE event_date = ?'''
+            self._execute_query(query_delete_all, (date_str,), commit=True)
+            self.load_data()
 
     # ------------------------------------------------------------------
     # ЛОГИКА ЗАДАЧ (Tasks) - ОСТАЛАСЬ БЕЗ ИЗМЕНЕНИЙ

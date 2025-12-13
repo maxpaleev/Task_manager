@@ -71,3 +71,17 @@ def add_event(
 
     # Возвращаем ID, присвоенный сервером, для синхронизации на клиенте
     return {"status": "success", "message": "Событие сохранено, будет отправлено по расписанию.", "id": new_event.id}
+
+@router.delete("/events/{event_id}")
+def delete_event(
+        event_id: int,
+        current_user: User = AuthenticatedUser,
+        db: Session = Depends(get_db)):
+    event = db.query(Event).filter(Event.id == event_id, Event.user_id == current_user.id).first()
+    if not event:
+        raise HTTPException(status_code=404, detail="Событие не найдено или не принадлежит пользователю.")
+
+    db.delete(event)
+    db.commit()
+
+    return {"status": "success", "message": f"Событие ID {event_id} удалено."}
