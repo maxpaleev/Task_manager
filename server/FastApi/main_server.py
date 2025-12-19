@@ -4,6 +4,7 @@ import asyncio
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 
+import uvicorn
 from fastapi import FastAPI, Depends
 from aiogram import Bot, Dispatcher
 from server.Bot.tg_bot import router as bot_router
@@ -12,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from DB.database import engine, Base, SessionLocal, get_db
 from DB.models import User, Event
-from .api import router as api_router
+from server.FastApi.api import router as api_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -93,3 +94,6 @@ async def lifespan(app: FastAPI):
 # Инициализация приложения с lifespan
 app = FastAPI(lifespan=lifespan)
 app.include_router(api_router)
+
+if __name__ == '__main__':
+    uvicorn.run('main_server:app', host="10.62.25.171", port=8000)

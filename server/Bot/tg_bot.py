@@ -4,7 +4,6 @@ import string
 from aiogram import Router, types
 from aiogram.filters import Command
 
-from sqlalchemy.orm import Session
 from DB.database import SessionLocal
 from DB.models import User
 

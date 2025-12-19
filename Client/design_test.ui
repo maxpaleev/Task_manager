@@ -103,9 +103,23 @@
             <property name="enabled">
              <bool>true</bool>
             </property>
+            <property name="animated">
+             <bool>true</bool>
+            </property>
+            <property name="columnCount">
+             <number>2</number>
+            </property>
+            <attribute name="headerDefaultSectionSize">
+             <number>439</number>
+            </attribute>
             <column>
              <property name="text">
-              <string notr="true">1</string>
+              <string notr="true">Событие</string>
+             </property>
+            </column>
+            <column>
+             <property name="text">
+              <string>Время</string>
              </property>
             </column>
            </widget>
@@ -258,18 +272,82 @@
        <attribute name="title">
         <string>Настройки</string>
        </attribute>
-       <widget class="QPushButton" name="tgButton">
+       <widget class="QWidget" name="verticalLayoutWidget">
         <property name="geometry">
          <rect>
-          <x>370</x>
-          <y>150</y>
-          <width>75</width>
-          <height>23</height>
+          <x>10</x>
+          <y>10</y>
+          <width>431</width>
+          <height>181</height>
          </rect>
         </property>
-        <property name="text">
-         <string>Связать с TG</string>
-        </property>
+        <layout class="QVBoxLayout" name="verticalLayout_7">
+         <item>
+          <widget class="QLabel" name="label_3">
+           <property name="frameShape">
+            <enum>QFrame::NoFrame</enum>
+           </property>
+           <property name="text">
+            <string>Привязка Telegram (уведомелния о событиях будут приходить в Telegramm бота)</string>
+           </property>
+           <property name="alignment">
+            <set>Qt::AlignCenter</set>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="tgButton">
+           <property name="text">
+            <string>Связать с TG</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QLabel" name="label_4">
+           <property name="text">
+            <string>Шрифт</string>
+           </property>
+           <property name="alignment">
+            <set>Qt::AlignCenter</set>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <layout class="QHBoxLayout" name="horizontalLayout_2">
+           <item>
+            <widget class="QLabel" name="label_8">
+             <property name="text">
+              <string>Размер</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QSpinBox" name="fontsize">
+             <property name="minimum">
+              <number>1</number>
+             </property>
+             <property name="value">
+              <number>8</number>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </item>
+         <item>
+          <layout class="QHBoxLayout" name="horizontalLayout_8">
+           <item>
+            <widget class="QLabel" name="label_9">
+             <property name="text">
+              <string>Тип шрифта</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QFontComboBox" name="fontBox"/>
+           </item>
+          </layout>
+         </item>
+        </layout>
        </widget>
       </widget>
      </widget>

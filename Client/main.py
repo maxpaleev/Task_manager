@@ -13,7 +13,9 @@ from PyQt6.QtCore import Qt, QDate, QTime, QTimer, QThread, pyqtSignal, QObject
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QMessageBox, QTreeWidgetItem, QMenu, QTreeWidget, QInputDialog
 )
+from PyQt6.QtGui import QFont
 
+# SERVER_URL = "http://10.62.25.171:8000"
 SERVER_URL = "http://127.0.0.1:8000"
 DB_FILE = 'planner.db'
 TASK_CATEGORIES = [
@@ -90,6 +92,9 @@ class SimplePlanner(QMainWindow):
         self.tg_enabled = False
 
         self._init_db()
+        self.global_font = QFont('Segoe UI', 8)
+        app.setFont(self.global_font)
+
         self.load_data()
         self.current_importance = TASK_CATEGORIES[0]
 
@@ -109,6 +114,26 @@ class SimplePlanner(QMainWindow):
         self.importanceChoice.buttonClicked.connect(self._set_importance)
         self.taskDes.setMaxLength(100)
         self.tgButton.clicked.connect(self.open_telegram_dialog)
+        self.fontsize.valueChanged.connect(self.change_font_size)
+        self.fontBox.currentTextChanged.connect(self.change_font)
+
+
+    def change_font_size(self):
+        size = self.fontsize.value()
+        font = self.fontBox.currentText()
+        self.global_font.setPointSize(size)
+        app.setFont(self.global_font)
+        query = "INSERT OR REPLACE INTO settings (id, font_size, font) VALUES (1, ?, ?)"
+        self._execute_query(query, (size, font,), commit=True)
+
+
+    def change_font(self):
+        size = self.fontsize.value()
+        font = self.fontBox.currentText()
+        self.global_font.setFamily(font)
+        app.setFont(self.global_font)
+        query = "INSERT OR REPLACE INTO settings (id, font, font_size) VALUES (1, ?, ?)"
+        self._execute_query(query, (font, size,), commit=True)
 
     # -------------------------------------------------------------------
     # ОБЩИЙ МЕТОД ДЛЯ РАБОТЫ С БД (ТВОЙ КОД)
@@ -158,11 +183,6 @@ class SimplePlanner(QMainWindow):
                 )
             ''')
 
-            try:
-                cursor.execute("ALTER TABLE events ADD COLUMN server_id INTEGER NULL")
-            except sqlite3.OperationalError:
-                pass
-
             queries = [
                 '''
                 CREATE TABLE IF NOT EXISTS tasks (
@@ -174,9 +194,12 @@ class SimplePlanner(QMainWindow):
                 ''',
                 '''
                 CREATE TABLE IF NOT EXISTS settings (
-                    key TEXT PRIMARY KEY,
+                    id INTEGER PRIMARY KEY DEFAULT 1,
+                    key TEXT UNIQUE,
                     value TEXT,
-                    tg_enabled INTEGER
+                    tg_enabled INTEGER,
+                    font_size INTEGER DEFAULT 8,
+                    font TEXT DEFAULT 'Segoe UI'
                 )
                 '''
             ]
@@ -222,6 +245,24 @@ class SimplePlanner(QMainWindow):
             for name, desc, cat in task_rows:
                 if cat in self.tasks:
                     self.tasks[cat].append((name, desc))
+
+
+        self.tg_enabled = self._execute_query('SELECT tg_enabled FROM settings', fetch_all=True)
+        if self.tg_enabled:
+            if self.tg_enabled[0][0] == 1:
+                self.tgButton.setText('Связано')
+
+        size = self._execute_query('SELECT font_size FROM settings', fetch_all=True)
+        font = self._execute_query('SELECT font FROM settings', fetch_all=True)
+        if size:
+            self.fontsize.setValue(size[0][0])
+            self.global_font.setPointSize(size[0][0])
+            app.setFont(self.global_font)
+        if font:
+            self.fontBox.setCurrentText(font[0][0])
+            self.global_font.setFamily(font[0][0])
+            app.setFont(self.global_font)
+
 
         self.update_event_list()
         self.update_task_list()
@@ -348,7 +389,7 @@ class SimplePlanner(QMainWindow):
 
     def open_telegram_dialog(self):
         code, ok = QInputDialog.getText(self, "Связывание Telegram",
-                                        "Введите код, который вам прислал бот в Telegram:")
+                                        "Напишите боту(@MaxPal_bot) '/start' и введите код, полученный  от него")
         if ok and code:
             self.tgButton.setEnabled(False)
             self.tgButton.setText("Загрузка...")
@@ -414,6 +455,7 @@ class SimplePlanner(QMainWindow):
             return
 
         date_py = self.calendarWidget.selectedDate().toPyDate()
+        # TODO сделать возможность создавать событие на несколько дней
         start_py = self.timeStart.time().toPyTime()
         end_py = self.timeEnd.time().toPyTime()
 
