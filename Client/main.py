@@ -90,7 +90,7 @@ class SimplePlanner(QMainWindow):
 
         # Инициализация переменных (ТВОЙ КОД)
         self.events: Dict[datetime.date, List[Tuple[str, datetime.time, datetime.time, int]]] = {}
-        self.tasks: Dict[str, List[Tuple[str, str]]] = {cat: [] for cat in TASK_CATEGORIES}
+        self.tasks: Dict[str, List[Tuple[str, str, int]]] = {cat: [] for cat in TASK_CATEGORIES}
         self.tg_enabled = False
         self.color = QColor('#FF7F50')
 
@@ -211,7 +211,8 @@ class SimplePlanner(QMainWindow):
                     id INTEGER PRIMARY KEY,
                     name TEXT NOT NULL,
                     description TEXT,
-                    category TEXT NOT NULL
+                    category TEXT NOT NULL,
+                    is_completed INTEGER DEFAULT 0
                 )
                 ''',
                 '''
@@ -260,13 +261,13 @@ class SimplePlanner(QMainWindow):
                     continue
 
         task_rows = self._execute_query(
-            "SELECT name, description, category FROM tasks",
+            "SELECT name, description, category, is_completed FROM tasks",
             fetch_all=True
         )
         if task_rows:
-            for name, desc, cat in task_rows:
+            for name, desc, cat, is_completed in task_rows:
                 if cat in self.tasks:
-                    self.tasks[cat].append((name, desc))
+                    self.tasks[cat].append((name, desc, is_completed))
 
         self.tg_enabled = self._execute_query('SELECT tg_enabled FROM settings', fetch_all=True)
         if self.tg_enabled:
@@ -330,6 +331,13 @@ class SimplePlanner(QMainWindow):
             action_toggle_done = menu.addAction(text)
             menu.addSeparator()
 
+        if tree_widget is self.taskList and item.parent():
+            task_data = item.data(0, Qt.ItemDataRole.UserRole)
+            is_completed = task_data[2]
+            text = "Отменить выполнение" if is_completed else "Выполнить"
+            action_toggle_done = menu.addAction(text)
+            menu.addSeparator()
+
         action_del = menu.addAction("Удалить")
         action_edit = menu.addAction("Редактировать")
         menu.addSeparator()
@@ -346,8 +354,10 @@ class SimplePlanner(QMainWindow):
 
         # Обработка нового действия
         if action == action_toggle_done:
-            self._toggle_event_completion(item)
-
+            if tree_widget is self.taskList:
+                self._toggle_task_completion(item)
+            elif tree_widget is self.eventList:
+                self._toggle_event_completion(item)
         elif action == action_del:
             self._delete_item(tree_widget, item)
         elif action == action_edit:
@@ -386,7 +396,7 @@ class SimplePlanner(QMainWindow):
 
             self._delete_task_logic(item)
 
-            name, desc = task_data
+            name, desc, _ = task_data
             self.taskName.setText(name)
             self.taskDes.setText(desc)
 
@@ -724,7 +734,7 @@ class SimplePlanner(QMainWindow):
             return
 
         success = self._execute_query(
-            '''INSERT INTO tasks (name, description, category) VALUES (?, ?, ?)''',
+            '''INSERT INTO tasks (name, description, category, is_completed) VALUES (?, ?, ?, 0)''',
             (name, desc, self.current_importance),
             commit=True
         )
@@ -751,10 +761,19 @@ class SimplePlanner(QMainWindow):
                 root = QTreeWidgetItem([category])
                 root.setData(0, Qt.ItemDataRole.UserRole, category)
 
-                for t in matching:
-                    name, desc = t
+                for t in sorted(matching, key=lambda x: x[2]):
+                    name, desc, is_completed = t
                     child = QTreeWidgetItem([name, desc])
                     child.setData(0, Qt.ItemDataRole.UserRole, t)
+                    if is_completed:
+                        font = child.font(0)
+                        font.setStrikeOut(True)
+                        child.setFont(0, font)
+                        child.setFont(1, font)
+
+                        gray_brush = QColor('gray')
+                        child.setForeground(0, gray_brush)
+                        child.setForeground(1, gray_brush)
                     root.addChild(child)
 
                 items.append(root)
@@ -777,6 +796,25 @@ class SimplePlanner(QMainWindow):
 
         self._execute_query(query, params, commit=True)
         self.load_data()
+
+    def _toggle_task_completion(self, item):
+        """Переключает статус выполнения события"""
+        cat = item.parent().data(0, Qt.ItemDataRole.UserRole)
+        task = item.data(0, Qt.ItemDataRole.UserRole)
+        name, desc, is_completed = task
+
+        # Инвертируем статус (1-0 или 0-1)
+        new_status = 0 if is_completed else 1
+
+        query = '''
+            UPDATE tasks 
+            SET is_completed = ? 
+            WHERE name = ? AND description = ? AND category = ?
+        '''
+        params = (new_status, name, desc, cat)
+
+        self._execute_query(query, params, commit=True)
+        self.load_data()  # Перезагружаем интерфейс
 
 
 if __name__ == '__main__':
