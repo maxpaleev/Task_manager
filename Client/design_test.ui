@@ -305,7 +305,7 @@
          <item>
           <widget class="QLabel" name="label_4">
            <property name="text">
-            <string>Шрифт</string>
+            <string>Интерфейс</string>
            </property>
            <property name="alignment">
             <set>Qt::AlignCenter</set>
@@ -317,7 +317,7 @@
            <item>
             <widget class="QLabel" name="label_8">
              <property name="text">
-              <string>Размер</string>
+              <string>Размер шрифта</string>
              </property>
             </widget>
            </item>
@@ -344,6 +344,24 @@
            </item>
            <item>
             <widget class="QFontComboBox" name="fontBox"/>
+           </item>
+          </layout>
+         </item>
+         <item>
+          <layout class="QHBoxLayout" name="horizontalLayout_9">
+           <item>
+            <widget class="QPushButton" name="colorButton">
+             <property name="text">
+              <string>Изменить цвет событий</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QPushButton" name="reset_colorButton">
+             <property name="text">
+              <string>Сбросить</string>
+             </property>
+            </widget>
            </item>
           </layout>
          </item>

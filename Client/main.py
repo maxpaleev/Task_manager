@@ -11,9 +11,9 @@ from plyer import notification
 from PyQt6 import uic
 from PyQt6.QtCore import Qt, QDate, QTime, QTimer, QThread, pyqtSignal, QObject
 from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QMessageBox, QTreeWidgetItem, QMenu, QTreeWidget, QInputDialog
+    QApplication, QMainWindow, QMessageBox, QTreeWidgetItem, QMenu, QTreeWidget, QInputDialog, QColorDialog
 )
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QFont, QTextCharFormat, QColor
 
 # SERVER_URL = "http://10.62.25.171:8000"
 SERVER_URL = "http://127.0.0.1:8000"
@@ -38,6 +38,7 @@ class NetworkWorker(QObject):
         self.payload = payload
         self.token = token
 
+    # noinspection PyUnresolvedReferences
     def run(self):
         headers = {}
         if self.token:
@@ -74,6 +75,7 @@ class SimplePlanner(QMainWindow):
         super().__init__()
 
         # Загрузка интерфейса из файла
+
         try:
             uic.loadUi('Client/design_test.ui', self)
         except Exception as e:
@@ -90,6 +92,7 @@ class SimplePlanner(QMainWindow):
         self.events: Dict[datetime.date, List[Tuple[str, datetime.time, datetime.time]]] = {}
         self.tasks: Dict[str, List[Tuple[str, str]]] = {cat: [] for cat in TASK_CATEGORIES}
         self.tg_enabled = False
+        self.color = QColor('#FF7F50')
 
         self._init_db()
         self.global_font = QFont('Segoe UI', 8)
@@ -116,6 +119,8 @@ class SimplePlanner(QMainWindow):
         self.tgButton.clicked.connect(self.open_telegram_dialog)
         self.fontsize.valueChanged.connect(self.change_font_size)
         self.fontBox.currentTextChanged.connect(self.change_font)
+        self.colorButton.clicked.connect(self.change_color)
+        self.reset_colorButton.clicked.connect(self.reset_color)
 
 
     def change_font_size(self):
@@ -134,6 +139,22 @@ class SimplePlanner(QMainWindow):
         app.setFont(self.global_font)
         query = "INSERT OR REPLACE INTO settings (id, font, font_size) VALUES (1, ?, ?)"
         self._execute_query(query, (font, size,), commit=True)
+
+    def change_color(self):
+        color = QColorDialog.getColor()
+        if color.isValid():
+            self.color = color
+            self.update_event_list()
+            query = "INSERT OR REPLACE INTO settings (id, color) VALUES (1, ?)"
+            self._execute_query(query, (color.name(),), commit=True)
+
+    def reset_color(self):
+        if self.color.isValid():
+            self.color = QColor('#FF7F50')
+            self.update_event_list()
+            query = "INSERT OR REPLACE INTO settings (id, color) VALUES (1, ?)"
+            self._execute_query(query, ('#FF7F50',), commit=True)
+
 
     # -------------------------------------------------------------------
     # ОБЩИЙ МЕТОД ДЛЯ РАБОТЫ С БД (ТВОЙ КОД)
@@ -195,11 +216,11 @@ class SimplePlanner(QMainWindow):
                 '''
                 CREATE TABLE IF NOT EXISTS settings (
                     id INTEGER PRIMARY KEY DEFAULT 1,
-                    key TEXT UNIQUE,
                     value TEXT,
                     tg_enabled INTEGER,
                     font_size INTEGER DEFAULT 8,
-                    font TEXT DEFAULT 'Segoe UI'
+                    font TEXT DEFAULT 'Segoe UI',
+                    color TEXT DEFAULT '#FF7F50'
                 )
                 '''
             ]
@@ -246,7 +267,6 @@ class SimplePlanner(QMainWindow):
                 if cat in self.tasks:
                     self.tasks[cat].append((name, desc))
 
-
         self.tg_enabled = self._execute_query('SELECT tg_enabled FROM settings', fetch_all=True)
         if self.tg_enabled:
             if self.tg_enabled[0][0] == 1:
@@ -254,6 +274,7 @@ class SimplePlanner(QMainWindow):
 
         size = self._execute_query('SELECT font_size FROM settings', fetch_all=True)
         font = self._execute_query('SELECT font FROM settings', fetch_all=True)
+        color = self._execute_query('SELECT color FROM settings', fetch_all=True)
         if size:
             self.fontsize.setValue(size[0][0])
             self.global_font.setPointSize(size[0][0])
@@ -262,7 +283,10 @@ class SimplePlanner(QMainWindow):
             self.fontBox.setCurrentText(font[0][0])
             self.global_font.setFamily(font[0][0])
             app.setFont(self.global_font)
-
+        if color != '#FF7F50':
+            if color:
+                self.color = QColor(color[0][0])
+                self.update_event_list()
 
         self.update_event_list()
         self.update_task_list()
@@ -359,15 +383,15 @@ class SimplePlanner(QMainWindow):
     # -------------------------------------------------------------------
 
     def _get_api_token(self) -> str | None:
-        query = "SELECT value FROM settings WHERE key = 'api_token'"
+        query = "SELECT value FROM settings WHERE id = 1"
         cursor = self._execute_query(query, fetch_all=True)
         return cursor[0][0] if cursor else None
 
     def _save_api_token(self, token: str):
-        query = "INSERT OR REPLACE INTO settings (key, value) VALUES ('api_token', ?)"
+        query = "INSERT OR REPLACE INTO settings (id, value) VALUES ('1', ?)"
         self._execute_query(query, (token,), commit=True)
         # Доп запрос для флага, если нужно
-        self._execute_query("UPDATE settings SET tg_enabled = 1 WHERE key = 'api_token'", commit=True)
+        self._execute_query("UPDATE settings SET tg_enabled = 1 WHERE id = 1", commit=True)
         self.tg_enabled = True
 
     def _run_worker(self, url, payload, on_success):
@@ -545,6 +569,10 @@ class SimplePlanner(QMainWindow):
 
             if matching:
                 root_item = QTreeWidgetItem([date_key.strftime("%d.%m.%Y")])
+                date = QDate(date_key.year, date_key.month, date_key.day)
+                fmt = QTextCharFormat()
+                fmt.setBackground(self.color)
+                self.calendarWidget.setDateTextFormat(date, fmt)  # Устанавливаем формат даты в календаре idget
                 root_item.setData(0, Qt.ItemDataRole.UserRole, date_key)
 
                 for ev in sorted(matching, key=lambda x: x[1]):
@@ -608,7 +636,6 @@ class SimplePlanner(QMainWindow):
 
                 self.worker.moveToThread(self.thread)
                 self.thread.started.connect(self.worker.run)
-
 
                 # Безопасная очистка (как в предыдущих рекомендациях)
                 self.worker.finished.connect(self.thread.quit)
