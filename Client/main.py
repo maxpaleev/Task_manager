@@ -601,8 +601,8 @@ class SimplePlanner(QMainWindow):
                 date = QDate(date_key.year, date_key.month, date_key.day)
                 fmt = QTextCharFormat()
                 fmt.setBackground(self.color)
-
-                self.calendarWidget.setDateTextFormat(date, fmt)  # Устанавливаем формат даты в календаре idget
+                self.calendarWidget.setDateTextFormat(date, fmt)
+                # Устанавливаем формат даты в календаре idget
                 root_item.setData(0, Qt.ItemDataRole.UserRole, date_key)
 
                 for ev in sorted(matching, key=lambda x: (x[1], x[3])):
@@ -611,6 +611,8 @@ class SimplePlanner(QMainWindow):
                     child = QTreeWidgetItem([name, time_str])
                     child.setData(0, Qt.ItemDataRole.UserRole, ev)
                     if is_completed:
+                        fmt.clearBackground()
+                        self.calendarWidget.setDateTextFormat(date, fmt)
                         # Шрифт зачеркнутый
                         font = child.font(0)
                         font.setStrikeOut(True)
