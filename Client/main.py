@@ -251,8 +251,8 @@ class SimplePlanner(QMainWindow):
             for name, event_date, time_start, time_end, is_completed in event_rows:
                 try:
                     date = datetime.datetime.strptime(event_date, "%Y-%m-%d").date()
-                    time_start_obj = datetime.datetime.strptime(time_start, "%H:%M:%S").time()
-                    time_end_obj = datetime.datetime.strptime(time_end, "%H:%M:%S").time()
+                    time_start_obj = datetime.datetime.strptime(time_start, "%H:%M").time()
+                    time_end_obj = datetime.datetime.strptime(time_end, "%H:%M").time()
 
                     if date not in self.events:
                         self.events[date] = []
@@ -516,8 +516,8 @@ class SimplePlanner(QMainWindow):
             return
 
         date_str = date_py.strftime("%Y-%m-%d")
-        start_str = start_py.strftime("%H:%M:%S")
-        end_str = end_py.strftime("%H:%M:%S")
+        start_str = start_py.strftime("%H:%M")
+        end_str = end_py.strftime("%H:%M")
 
         # 1. Сохранение локально (ТВОЙ КОД)
         query = '''
@@ -543,7 +543,7 @@ class SimplePlanner(QMainWindow):
                 selected_time_start.hour(), selected_time_start.minute(), selected_time_start.second()
             )
             # Внимание: здесь используем тот формат, который ждет твой schema.py
-            notify_at_str = py_datetime.strftime("%Y-%m-%d %H:%M:%S")
+            notify_at_str = py_datetime.strftime("%Y-%m-%d %H:%M")
 
             payload = {
                 'text': f'Событие: {name} ({start_str} - {end_str})',
@@ -641,8 +641,8 @@ class SimplePlanner(QMainWindow):
             name, start_time, end_time, _ = ev_data
 
             date_str = date_key.strftime("%Y-%m-%d")
-            start_str = start_time.strftime("%H:%M:%S")
-            end_str = end_time.strftime("%H:%M:%S")
+            start_str = start_time.strftime("%H:%M")
+            end_str = end_time.strftime("%H:%M")
 
             # 1. Получаем server_id из локальной БД (ДО удаления!)
             query_select = '''
@@ -662,6 +662,10 @@ class SimplePlanner(QMainWindow):
                 WHERE name = ? AND event_date = ? AND time_start = ? AND time_end = ?
             '''
             self._execute_query(query_delete, params_select, commit=True)
+            date = QDate(date_key.year, date_key.month, date_key.day)
+            fmt = QTextCharFormat()
+            fmt.clearBackground()
+            self.calendarWidget.setDateTextFormat(date, fmt)
             self.load_data()  # Обновляем UI сразу же, чтобы удаление казалось мгновенным
 
             # 3. Если есть server_id и токен, запускаем синхронизацию на сервере
@@ -695,6 +699,10 @@ class SimplePlanner(QMainWindow):
             QMessageBox.information(self, "Внимание", "При удалении целого дня, удаление происходит только локально.")
             date_key = item.data(0, Qt.ItemDataRole.UserRole)
             date_str = date_key.strftime("%Y-%m-%d")
+            date = QDate(date_key.year, date_key.month, date_key.day)
+            fmt = QTextCharFormat()
+            fmt.clearBackground()
+            self.calendarWidget.setDateTextFormat(date, fmt)
 
             query_delete_all = '''DELETE FROM events WHERE event_date = ?'''
             self._execute_query(query_delete_all, (date_str,), commit=True)

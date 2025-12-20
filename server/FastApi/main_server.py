@@ -1,7 +1,7 @@
 import logging
 import random
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from contextlib import asynccontextmanager
 
 import uvicorn
@@ -32,9 +32,30 @@ async def check_events():
     with SessionLocal() as db:
         try:
             now_check = datetime.now()
-            # Eager loading не нужен, так как мы берем простые поля, но сессия нужна чистая
+            if now_check.hour == 23 and now_check.minute == 5:
+                print('check_events')
+                events_to_send = db.query(Event).filter(
+                    Event.start_time <= now_check,
+                    Event.is_sent == False
+                ).all()
+
+                if not events_to_send:
+                    return
+
+                # Оптимизация: можно использовать join, но для простоты оставим так
+                event = events_to_send[0]
+                user = db.query(User).filter(User.id == event.user_id).first()
+                if user and user.telegram_id:
+                    try:
+                        await bot.send_message(
+                            chat_id=user.telegram_id,
+                            text=f"⏰ Напоминания на день:\n {'\n'.join([e.text for e in events_to_send])}"
+                        )
+                    except Exception as e:
+                        logger.error(f"TG Error: {e}")
+
             events_to_send = db.query(Event).filter(
-                Event.start_time <= now_check,
+                Event.start_time - timedelta(hours=1) == datetime(now_check.year, now_check.month, now_check.day, now_check.hour, now_check.minute),
                 Event.is_sent == False
             ).all()
 
@@ -58,7 +79,6 @@ async def check_events():
                     # Если пользователя нет, помечаем как отправленное (или ошибочное),
                     # чтобы не спамить в лог каждую минуту
                     event.is_sent = True
-
             db.commit()
         except Exception as e:
             logger.error(f"Scheduler error: {e}")
