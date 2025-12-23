@@ -614,24 +614,40 @@ class SimplePlanner(QMainWindow):
             if matching:
                 root_item = QTreeWidgetItem([date_key.strftime("%d.%m.%Y")])
 
+
                 date = QDate(date_key.year, date_key.month, date_key.day)
                 fmt = QTextCharFormat()
                 fmt.setBackground(self.color)
+
                 self.calendarWidget.setDateTextFormat(date, fmt)
                 # Устанавливаем формат даты в календаре idget
                 root_item.setData(0, Qt.ItemDataRole.UserRole, date_key)
 
-                for ev in sorted(matching, key=lambda x: (x[1], x[3])):
+                for ev in sorted(matching, key=lambda x: (x[2], x[4])):
                     name, date_end, start, end, is_completed = ev
                     if date_end == date:
                         time_str = f"{start.strftime('%H:%M')} - {end.strftime('%H:%M')}"
                     else:
                         time_str = f"{datetime.datetime.combine(date_key, start).strftime('%d.%m.%Y %H:%M')} - {datetime.datetime.combine(date_end, end).strftime('%d.%m.%Y %H:%M')}"
+                        for i in range(date_key.day + 1, date_end.day):
+                            _date = QDate(date_key.year, date_key.month, i)
+                            fmt = QTextCharFormat()
+                            fmt.setBackground(QColor('#FF9F7C'))
+                            self.calendarWidget.setDateTextFormat(_date, fmt)
+                            fmt.setBackground(self.color)
+                            self.calendarWidget.setDateTextFormat(date, fmt)
+                            self.calendarWidget.setDateTextFormat(date_end, fmt)
                     child = QTreeWidgetItem([name, time_str])
                     child.setData(0, Qt.ItemDataRole.UserRole, ev)
                     if is_completed:
-                        fmt.clearBackground()
-                        self.calendarWidget.setDateTextFormat(date, fmt)
+                        if date_end == date:
+                            fmt.clearBackground()
+                            self.calendarWidget.setDateTextFormat(date, fmt)
+                        else:
+                            for i in range(date_key.day, date_end.day + 1):
+                                date = QDate(date_key.year, date_key.month, i)
+                                fmt.clearBackground()
+                                self.calendarWidget.setDateTextFormat(date, fmt)
                         # Шрифт зачеркнутый
                         font = child.font(0)
                         font.setStrikeOut(True)
@@ -682,10 +698,17 @@ class SimplePlanner(QMainWindow):
                 WHERE name = ? AND start_date = ? AND end_date = ? AND time_start = ? AND time_end = ?
             '''
             self._execute_query(query_delete, params_select, commit=True)
-            date = QDate(date_key.year, date_key.month, date_key.day)
-            fmt = QTextCharFormat()
-            fmt.clearBackground()
-            self.calendarWidget.setDateTextFormat(date, fmt)
+            if date_key == date_end:
+                date = QDate(date_key.year, date_key.month, date_key.day)
+                fmt = QTextCharFormat()
+                fmt.clearBackground()
+                self.calendarWidget.setDateTextFormat(date, fmt)
+            else:
+                for i in range(date_key.day, date_end.day + 1):
+                    date = QDate(date_key.year, date_key.month, i)
+                    fmt = QTextCharFormat()
+                    fmt.clearBackground()
+                    self.calendarWidget.setDateTextFormat(date, fmt)
             self.load_data()  # Обновляем UI сразу же, чтобы удаление казалось мгновенным
 
             # 3. Если есть server_id и токен, запускаем синхронизацию на сервере
@@ -724,7 +747,7 @@ class SimplePlanner(QMainWindow):
             fmt.clearBackground()
             self.calendarWidget.setDateTextFormat(date, fmt)
 
-            query_delete_all = '''DELETE FROM events WHERE event_date = ?'''
+            query_delete_all = '''DELETE FROM events WHERE start_date = ?'''
             self._execute_query(query_delete_all, (date_str,), commit=True)
             self.load_data()
 
