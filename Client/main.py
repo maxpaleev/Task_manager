@@ -89,11 +89,11 @@ class SimplePlanner(QMainWindow):
         self.setWindowTitle('Минипланировщик')
 
         # Инициализация переменных (ТВОЙ КОД)
-        self.events: Dict[datetime.date, List[Tuple[str, datetime.time, datetime.time, int]]] = {}
+        self.events: Dict[datetime.date, List[Tuple[str, datetime.date, datetime.time, datetime.time, int]]] = {}
         self.tasks: Dict[str, List[Tuple[str, str, int]]] = {cat: [] for cat in TASK_CATEGORIES}
         self.tg_enabled = False
         self.color = QColor('#FF7F50')
-
+        self.current_date = 1
         self._init_db()
         self.global_font = QFont('Segoe UI', 8)
         app.setFont(self.global_font)
@@ -111,6 +111,7 @@ class SimplePlanner(QMainWindow):
 
         # Соединение сигналов (ТВОЙ КОД)
         self.addEventBtn.clicked.connect(self.add_event)
+        self.calendarWidget.clicked.connect(self.date_changed_widget)
         self.searchEvent.textChanged.connect(self.update_event_list)
         self.taskButton.clicked.connect(self.add_task)
         self.searchTask.textChanged.connect(self.update_task_list)
@@ -122,7 +123,6 @@ class SimplePlanner(QMainWindow):
         self.colorButton.clicked.connect(self.change_color)
         self.reset_colorButton.clicked.connect(self.reset_color)
 
-
     def change_font_size(self):
         size = self.fontsize.value()
         font = self.fontBox.currentText()
@@ -130,7 +130,6 @@ class SimplePlanner(QMainWindow):
         app.setFont(self.global_font)
         query = "INSERT OR REPLACE INTO settings (id, font_size, font) VALUES (1, ?, ?)"
         self._execute_query(query, (size, font,), commit=True)
-
 
     def change_font(self):
         size = self.fontsize.value()
@@ -155,6 +154,14 @@ class SimplePlanner(QMainWindow):
             query = "INSERT OR REPLACE INTO settings (id, color) VALUES (1, ?)"
             self._execute_query(query, ('#FF7F50',), commit=True)
 
+    def date_changed_widget(self):
+        if self.calendarWidget.selectedDate() and self.current_date == 1:
+            self.dateStart.setDate(self.calendarWidget.selectedDate())
+            self.dateEnd.setDate(self.calendarWidget.selectedDate())
+            self.current_date = 2
+        elif self.calendarWidget.selectedDate() and self.current_date == 2:
+            self.dateEnd.setDate(self.calendarWidget.selectedDate())
+            self.current_date = 1
 
     # -------------------------------------------------------------------
     # ОБЩИЙ МЕТОД ДЛЯ РАБОТЫ С БД
@@ -197,7 +204,8 @@ class SimplePlanner(QMainWindow):
                 CREATE TABLE IF NOT EXISTS events (
                     id INTEGER PRIMARY KEY,
                     name TEXT NOT NULL,
-                    event_date TEXT NOT NULL,
+                    start_date TEXT NOT NULL,
+                    end_date TEXT NOT NULL,
                     time_start TEXT NOT NULL,
                     time_end TEXT NOT NULL,
                     is_completed INTEGER DEFAULT 0,
@@ -244,21 +252,23 @@ class SimplePlanner(QMainWindow):
             self.tasks[category] = []
 
         event_rows = self._execute_query(
-            "SELECT name, event_date, time_start, time_end, is_completed FROM events ORDER BY event_date, time_start",
+            "SELECT name, start_date, end_date, time_start, time_end, is_completed FROM events ORDER BY start_date, "
+            "time_start",
             fetch_all=True
         )
         if event_rows:
-            for name, event_date, time_start, time_end, is_completed in event_rows:
+            for name, start_date, end_date, time_start, time_end, is_completed in event_rows:
                 try:
-                    date = datetime.datetime.strptime(event_date, "%Y-%m-%d").date()
+                    date_start_obj = datetime.datetime.strptime(start_date, "%Y-%m-%d").date()
+                    date_end_obj = datetime.datetime.strptime(end_date, "%Y-%m-%d").date()
                     time_start_obj = datetime.datetime.strptime(time_start, "%H:%M").time()
                     time_end_obj = datetime.datetime.strptime(time_end, "%H:%M").time()
 
-                    if date not in self.events:
-                        self.events[date] = []
-                    self.events[date].append((name, time_start_obj, time_end_obj, is_completed))
+                    if date_start_obj not in self.events:
+                        self.events[date_start_obj] = []
+                    self.events[date_start_obj].append((name, date_end_obj, time_start_obj, time_end_obj, is_completed))
                 except ValueError:
-                    continue
+                    self.QMessageBox.warning(self, "Ошибка", "Некорректные данные в базе данных")
 
         task_rows = self._execute_query(
             "SELECT name, description, category, is_completed FROM tasks",
@@ -326,7 +336,7 @@ class SimplePlanner(QMainWindow):
         if tree_widget is self.eventList and item.parent():
             # Получаем данные, чтобы понять, какой текст показать
             ev_data = item.data(0, Qt.ItemDataRole.UserRole)
-            is_completed = ev_data[3]  # 4-й элемент
+            is_completed = ev_data[4]  # 4-й элемент
             text = "Отменить выполнение" if is_completed else "Выполнить"
             action_toggle_done = menu.addAction(text)
             menu.addSeparator()
@@ -384,10 +394,12 @@ class SimplePlanner(QMainWindow):
 
             self._delete_event_logic(item)
 
-            name, start, end, _ = event_data
+            name, end_date, start, end, _ = event_data
             self.eventName.setText(name)
             self.timeStart.setTime(QTime(start.hour, start.minute))
             self.timeEnd.setTime(QTime(end.hour, end.minute))
+            self.dateStart.setDate(QDate(event_date.year, event_date.month, event_date.day))
+            self.dateEnd.setDate(QDate(end_date.year, end_date.month, end_date.day))
             self.calendarWidget.setSelectedDate(QDate(event_date.year, event_date.month, event_date.day))
 
         elif tree_widget is self.taskList:
@@ -402,7 +414,7 @@ class SimplePlanner(QMainWindow):
 
             self.current_importance = category_name
             for btn in self.importanceChoice.buttons():
-                if btn.text() == category_name:
+                if btn.event_name() == category_name:
                     btn.setChecked(True)
                     break
 
@@ -479,7 +491,7 @@ class SimplePlanner(QMainWindow):
 
         if current_date in self.events:
             for event in self.events[current_date]:
-                name, start, end, _ = event
+                name, _, start, end, _ = event
                 if start.hour == current_time.hour and start.minute == current_time.minute:
                     self._send_windows_notification(name, start, end)
 
@@ -505,26 +517,26 @@ class SimplePlanner(QMainWindow):
         if not name:
             QMessageBox.warning(self, "Ошибка", "Введите название события")
             return
-
-        date_py = self.calendarWidget.selectedDate().toPyDate()
-        # TODO сделать возможность создавать событие на несколько дней
+        date_start = self.dateStart.date().toPyDate()
+        date_end = self.dateEnd.date().toPyDate()
         start_py = self.timeStart.time().toPyTime()
         end_py = self.timeEnd.time().toPyTime()
 
-        if end_py < start_py:
+        if end_py < start_py and date_start <= date_end:
             QMessageBox.warning(self, "Ошибка", "Время окончания не может быть раньше начала")
             return
 
-        date_str = date_py.strftime("%Y-%m-%d")
+        date_start_str = date_start.strftime("%Y-%m-%d")
+        date_end_str = date_end.strftime("%Y-%m-%d")
         start_str = start_py.strftime("%H:%M")
         end_str = end_py.strftime("%H:%M")
 
         # 1. Сохранение локально (ТВОЙ КОД)
         query = '''
-                    INSERT INTO events (name, event_date, time_start, time_end, server_id, is_completed) 
-                    VALUES (?, ?, ?, ?, NULL, 0)
+                    INSERT INTO events (name, start_date, end_date, time_start, time_end, server_id, is_completed) 
+                    VALUES (?, ?, ?, ?, ?, NULL, 0)
                 '''
-        params = (name, date_str, start_str, end_str)
+        params = (name, date_start_str, date_end_str, start_str, end_str)
         cursor = self._execute_query(query, params, commit=True)
         local_id = cursor.lastrowid if cursor else None
 
@@ -536,17 +548,19 @@ class SimplePlanner(QMainWindow):
         token = self._get_api_token()
         if token:
             # Получаем полный datetime для сервера
-            selected_date = self.calendarWidget.selectedDate()
+            start_date = self.dateStart.date().toPyDate()
+            end_date = self.dateEnd.date().toPyDate()
             selected_time_start = self.timeStart.time()
-            py_datetime = datetime.datetime(
-                selected_date.year(), selected_date.month(), selected_date.day(),
-                selected_time_start.hour(), selected_time_start.minute(), selected_time_start.second()
-            )
+            start_str = datetime.datetime.combine(start_date, selected_time_start.toPyTime())
             # Внимание: здесь используем тот формат, который ждет твой schema.py
-            notify_at_str = py_datetime.strftime("%Y-%m-%d %H:%M")
+            notify_at_str = start_str.strftime("%Y-%m-%d %H:%M")
 
             payload = {
-                'text': f'Событие: {name} ({start_str} - {end_str})',
+                'event_name': f'Событие: {name}',
+                'event_start': start_date.strftime("%Y-%m-%d"),
+                'event_end': end_date.strftime("%Y-%m-%d"),
+                'time_start': start_str.strftime("%H:%M"),
+                'time_end': end_str.strftime("%H:%M"),
                 'notify_at': notify_at_str
             }
 
@@ -570,6 +584,8 @@ class SimplePlanner(QMainWindow):
 
         # 3. Обновление UI (ТВОЙ КОД)
         self.eventName.clear()
+        self.dateStart.setDate(QDate.currentDate())
+        self.dateEnd.setDate(QDate.currentDate())
         self.timeStart.setTime(QTime(0, 0))
         self.timeEnd.setTime(QTime(0, 0))
         self.load_data()
@@ -606,8 +622,11 @@ class SimplePlanner(QMainWindow):
                 root_item.setData(0, Qt.ItemDataRole.UserRole, date_key)
 
                 for ev in sorted(matching, key=lambda x: (x[1], x[3])):
-                    name, start, end, is_completed = ev
-                    time_str = f"{start.strftime('%H:%M')} - {end.strftime('%H:%M')}"
+                    name, date_end, start, end, is_completed = ev
+                    if date_end == date:
+                        time_str = f"{start.strftime('%H:%M')} - {end.strftime('%H:%M')}"
+                    else:
+                        time_str = f"{datetime.datetime.combine(date_key, start).strftime('%d.%m.%Y %H:%M')} - {datetime.datetime.combine(date_end, end).strftime('%d.%m.%Y %H:%M')}"
                     child = QTreeWidgetItem([name, time_str])
                     child.setData(0, Qt.ItemDataRole.UserRole, ev)
                     if is_completed:
@@ -638,18 +657,19 @@ class SimplePlanner(QMainWindow):
             # Получаем данные события
             date_key = item.parent().data(0, Qt.ItemDataRole.UserRole)
             ev_data = item.data(0, Qt.ItemDataRole.UserRole)
-            name, start_time, end_time, _ = ev_data
+            name, date_end, start_time, end_time, _ = ev_data
 
             date_str = date_key.strftime("%Y-%m-%d")
+            date_end_str = date_end.strftime("%Y-%m-%d")
             start_str = start_time.strftime("%H:%M")
             end_str = end_time.strftime("%H:%M")
 
             # 1. Получаем server_id из локальной БД (ДО удаления!)
             query_select = '''
                 SELECT server_id FROM events 
-                WHERE name = ? AND event_date = ? AND time_start = ? AND time_end = ?
+                WHERE name = ? AND start_date = ? AND end_date = ? AND time_start = ? AND time_end = ?
             '''
-            params_select = (name, date_str, start_str, end_str)
+            params_select = (name, date_str, date_end_str, start_str, end_str)
 
             result = self._execute_query(query_select, params_select, fetch_all=True)
 
@@ -659,7 +679,7 @@ class SimplePlanner(QMainWindow):
             # 2. Локальное удаление
             query_delete = '''
                 DELETE FROM events 
-                WHERE name = ? AND event_date = ? AND time_start = ? AND time_end = ?
+                WHERE name = ? AND start_date = ? AND end_date = ? AND time_start = ? AND time_end = ?
             '''
             self._execute_query(query_delete, params_select, commit=True)
             date = QDate(date_key.year, date_key.month, date_key.day)
@@ -708,26 +728,27 @@ class SimplePlanner(QMainWindow):
             self._execute_query(query_delete_all, (date_str,), commit=True)
             self.load_data()
 
-
     def _toggle_event_completion(self, item):
         data_key = item.parent().data(0, Qt.ItemDataRole.UserRole)
         ev_data = item.data(0, Qt.ItemDataRole.UserRole)
-        name, start_time, end_time, is_completed = ev_data
+        name, date_end, start_time, end_time, is_completed = ev_data
 
         date_str = data_key.strftime("%Y-%m-%d")
-        start_str = start_time.strftime("%H:%M:%S")
-        end_str = end_time.strftime("%H:%M:%S")
+        date_end_str = date_end.strftime("%Y-%m-%d")
+        start_str = start_time.strftime("%H:%M")
+        end_str = end_time.strftime("%H:%M")
 
         new_status = 0 if is_completed else 1
 
         query = '''
                     UPDATE events 
                     SET is_completed = ? 
-                    WHERE name = ? AND event_date = ? AND time_start = ? AND time_end = ?
+                    WHERE name = ? AND start_date = ? AND end_date = ? AND time_start = ? AND time_end = ?
                 '''
-        params = (new_status, name, date_str, start_str, end_str)
+        params = (new_status, name, date_str, date_end_str, start_str, end_str)
         self._execute_query(query, params, commit=True)
         self.load_data()
+
     # ------------------------------------------------------------------
     # ЛОГИКА ЗАДАЧ (Tasks)
     # ------------------------------------------------------------------

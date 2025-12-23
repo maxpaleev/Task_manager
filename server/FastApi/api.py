@@ -60,7 +60,7 @@ def add_event(
 
     new_event = Event(
         user_id=current_user.id,  # ИСПРАВЛЕНО
-        text=event_data.text,
+        event_name=event_data.text,
         start_time=event_data.notify_at,
         is_sent=False
     )

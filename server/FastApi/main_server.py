@@ -49,7 +49,7 @@ async def check_events():
                     try:
                         await bot.send_message(
                             chat_id=user.telegram_id,
-                            text=f"⏰ Напоминания на день:\n {'\n'.join([e.text for e in events_to_send])}"
+                            text=f"⏰ Напоминания на день:\n {'\n'.join([e.event_name for e in events_to_send])}"
                         )
                     except Exception as e:
                         logger.error(f"TG Error: {e}")
@@ -70,7 +70,7 @@ async def check_events():
                     try:
                         await bot.send_message(
                             chat_id=user.telegram_id,
-                            text=f"⏰ Напоминание: {event.text}"
+                            text=f"⏰ Напоминание: {event.event_name}"
                         )
                         event.is_sent = True
                     except Exception as e:

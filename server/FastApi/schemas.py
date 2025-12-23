@@ -2,8 +2,11 @@ from pydantic import BaseModel
 from datetime import datetime
 
 class EventCreate(BaseModel):
-    text: str
-    # Pydantic сам распарсит строку "YYYY-MM-DD HH:MM:SS" в объект datetime
+    event_name: str
+    event_start: datetime
+    event_end: datetime
+    time_start: datetime
+    time_end: datetime
     notify_at: datetime
 
 class LinkCode(BaseModel):

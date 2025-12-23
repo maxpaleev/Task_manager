@@ -17,7 +17,10 @@ class Event(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey('users.id'))
-    text = Column(String)
+    event_name = Column(String)
+    date_start = Column(DateTime)
+    date_end = Column(DateTime)
     start_time = Column(DateTime)
+    end_time = Column(DateTime)
     is_sent = Column(Boolean, default=False)
     owner = relationship("User", back_populates="events")
