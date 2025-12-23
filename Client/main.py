@@ -738,17 +738,49 @@ class SimplePlanner(QMainWindow):
                 self.thread.start()
 
         else:
-            # --- Удаление всех событий за день (без синхронизации) ---
+# --- Удаление всех событий за день ---
             QMessageBox.information(self, "Внимание", "При удалении целого дня, удаление происходит только локально.")
             date_key = item.data(0, Qt.ItemDataRole.UserRole)
             date_str = date_key.strftime("%Y-%m-%d")
-            date = QDate(date_key.year, date_key.month, date_key.day)
-            fmt = QTextCharFormat()
-            fmt.clearBackground()
-            self.calendarWidget.setDateTextFormat(date, fmt)
 
-            query_delete_all = '''DELETE FROM events WHERE start_date = ?'''
-            self._execute_query(query_delete_all, (date_str,), commit=True)
+            # Получаем все события с этим start_date
+            query = "SELECT end_date FROM events WHERE start_date = ?"
+            result = self._execute_query(query, (date_str,), fetch_all=True)
+
+            if not result:
+                # Нет событий — удаляем и выходим
+                query_delete = "DELETE FROM events WHERE start_date = ?"
+                self._execute_query(query_delete, (date_str,), commit=True)
+                self.load_data()
+                return
+
+            # Парсим end_date и находим максимальную дату окончания
+            end_dates = []
+            for row in result:
+                end_date_str = row[0]  # например, '2025-02-03'
+                try:
+                    year, month, day = map(int, end_date_str.split('-'))
+                    end_dates.append(datetime.date(year, month, day))
+                except:
+                    continue  # пропускаем некорректные даты
+
+            if not end_dates:
+                max_end_date = date_key
+            else:
+                max_end_date = max(end_dates)
+
+            # Очищаем фон для всех дней от start_date до max_end_date
+            current = date_key
+            while current <= max_end_date:
+                qdate = QDate(current.year, current.month, current.day)
+                fmt = QTextCharFormat()
+                fmt.clearBackground()
+                self.calendarWidget.setDateTextFormat(qdate, fmt)
+                current += datetime.timedelta(days=1)
+
+            # Удаляем события
+            query_delete = "DELETE FROM events WHERE start_date = ?"
+            self._execute_query(query_delete, (date_str,), commit=True)
             self.load_data()
 
     def _toggle_event_completion(self, item):
