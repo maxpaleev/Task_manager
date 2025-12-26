@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, Boolean, ForeignKey
+from sqlalchemy import Column, Integer, String, DateTime, Boolean, ForeignKey, Date, Time
 from sqlalchemy.orm import relationship
 from .database import Base
 
@@ -18,9 +18,11 @@ class Event(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey('users.id'))
     event_name = Column(String)
-    date_start = Column(DateTime)
-    date_end = Column(DateTime)
-    start_time = Column(DateTime)
-    end_time = Column(DateTime)
-    is_sent = Column(Boolean, default=False)
+    start_date = Column(Date)
+    end_date = Column(Date)
+    time_start = Column(Time)
+    time_end = Column(Time)
+    notify_at = Column(DateTime)
+    is_sent = Column(Boolean, default=0)
+    is_completed = Column(Integer, default=False)
     owner = relationship("User", back_populates="events")

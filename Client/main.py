@@ -547,22 +547,19 @@ class SimplePlanner(QMainWindow):
         # 2. Подготовка и отправка на сервер (ЧЕРЕЗ WORKER)
         token = self._get_api_token()
         if token:
-            # Получаем полный datetime для сервера
-            start_date = self.dateStart.date().toPyDate()
-            end_date = self.dateEnd.date().toPyDate()
-            selected_time_start = self.timeStart.time()
-            start_str = datetime.datetime.combine(start_date, selected_time_start.toPyTime())
-            # Внимание: здесь используем тот формат, который ждет твой schema.py
+            start_str = datetime.datetime.combine(date_start, start_py)
             notify_at_str = start_str.strftime("%Y-%m-%d %H:%M")
 
             payload = {
                 'event_name': f'Событие: {name}',
-                'event_start': start_date.strftime("%Y-%m-%d"),
-                'event_end': end_date.strftime("%Y-%m-%d"),
-                'time_start': start_str.strftime("%H:%M"),
-                'time_end': end_str.strftime("%H:%M"),
+                'start_date': date_start.strftime("%Y-%m-%d"),
+                'end_date': date_end.strftime("%Y-%m-%d"),
+                'time_start': start_py.strftime("%H:%M"),
+                'time_end': end_py.strftime("%H:%M"),
+                'is_completed': 0,
                 'notify_at': notify_at_str
             }
+            print(payload)
 
             # Создаем поток для отправки события
             self.event_thread = QThread()

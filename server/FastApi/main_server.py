@@ -32,10 +32,10 @@ async def check_events():
     with SessionLocal() as db:
         try:
             now_check = datetime.now()
-            if now_check.hour == 23 and now_check.minute == 5:
+            if now_check.hour == 9 and now_check.minute == 0:
                 print('check_events')
                 events_to_send = db.query(Event).filter(
-                    Event.start_time <= now_check,
+                    Event.time_start <= now_check,
                     Event.is_sent == False
                 ).all()
 
@@ -55,7 +55,7 @@ async def check_events():
                         logger.error(f"TG Error: {e}")
 
             events_to_send = db.query(Event).filter(
-                Event.start_time - timedelta(hours=1) == datetime(now_check.year, now_check.month, now_check.day, now_check.hour, now_check.minute),
+                Event.time_start - timedelta(hours=1) == datetime(now_check.year, now_check.month, now_check.day, now_check.hour, now_check.minute),
                 Event.is_sent == False
             ).all()
 

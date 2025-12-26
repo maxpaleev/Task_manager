@@ -60,8 +60,13 @@ def add_event(
 
     new_event = Event(
         user_id=current_user.id,  # ИСПРАВЛЕНО
-        event_name=event_data.text,
-        start_time=event_data.notify_at,
+        event_name=event_data.event_name,
+        start_date=event_data.start_date,
+        end_date=event_data.end_date,
+        time_start=event_data.time_start,
+        time_end=event_data.time_end,
+        notify_at=event_data.notify_at,
+        is_completed=0,
         is_sent=False
     )
 
