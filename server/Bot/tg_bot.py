@@ -3,9 +3,9 @@ import string
 
 from aiogram import Router, types
 from aiogram.filters import Command
-
+from datetime import datetime
 from DB.database import SessionLocal
-from DB.models import User
+from DB.models import User, Event
 
 router = Router()
 
@@ -56,3 +56,15 @@ async def start(message: types.Message):
         "Код действителен 15 минут."
     )
     await message.answer(response_text, parse_mode="Markdown")
+
+@router.message(Command("events"))
+async def events(message: types.Message):
+    db = get_db()
+    telegram_id = str(message.from_user.id)
+    user = db.query(User).filter(User.telegram_id == telegram_id).first()
+    abc = db.query(Event).filter(Event.user_id == user.id).all()
+    ev = []
+    for i in abc:
+        ev.append(f'Событие: {i.event_name}\nДата и время начала: {datetime.combine(i.start_date, i.time_start).strftime("%Y-%m-%d %H:%M")}\nДата и время конца: {datetime.combine(i.end_date, i.time_end).strftime("%Y-%m-%d %H:%M")}')
+    await message.answer(f'События пользователя {user.id}:\n{"\n".join([i for i in ev])}')
+    print(ev)
