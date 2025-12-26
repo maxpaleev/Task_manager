@@ -2,7 +2,7 @@ import random
 import string
 
 from aiogram import Router, types
-from aiogram.filters import Command
+from aiogram.filters import Command, CommandObject
 from datetime import datetime
 from DB.database import SessionLocal
 from DB.models import User, Event
@@ -58,13 +58,21 @@ async def start(message: types.Message):
     await message.answer(response_text, parse_mode="Markdown")
 
 @router.message(Command("events"))
-async def events(message: types.Message):
+async def events(message: types.Message, command: CommandObject):
+    if command.args is None:
+        await message.answer('Ошибка - не передано число. Как должна выглядеть комманда:\n/events 27.12.2025 (число, месяц, год)')
+        return
+    try:
+        date = datetime.strptime(command.args, '%d.%m.%Y')
+    except ValueError:
+        await message.answer('Ошибка - не верный формат даты. Как должна выглядеть комманда:\n/events 27.12.2025 (число, месяц, год)')
+        return
     db = get_db()
     telegram_id = str(message.from_user.id)
     user = db.query(User).filter(User.telegram_id == telegram_id).first()
-    abc = db.query(Event).filter(Event.user_id == user.id).all()
+    abc = db.query(Event).filter(Event.user_id == user.id, Event.start_date == date).all()
     ev = []
     for i in abc:
         ev.append(f'Событие: {i.event_name}\nДата и время начала: {datetime.combine(i.start_date, i.time_start).strftime("%Y-%m-%d %H:%M")}\nДата и время конца: {datetime.combine(i.end_date, i.time_end).strftime("%Y-%m-%d %H:%M")}')
-    await message.answer(f'События пользователя {user.id}:\n{"\n".join([i for i in ev])}')
+    await message.answer(f'События на {date.strftime("%Y-%m-%d")}:\n{"\n".join([i for i in ev])}')
     print(ev)
