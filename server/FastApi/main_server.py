@@ -33,16 +33,14 @@ async def check_events():
         try:
             now_check = datetime.now()
             if now_check.hour == 9 and now_check.minute == 0:
-                print('check_events')
                 events_to_send = db.query(Event).filter(
-                    Event.time_start <= now_check,
-                    Event.is_sent == False
+                    Event.start_date == now_check.date(),
+                    # Event.is_sent == False
                 ).all()
 
                 if not events_to_send:
                     return
 
-                # Оптимизация: можно использовать join, но для простоты оставим так
                 event = events_to_send[0]
                 user = db.query(User).filter(User.id == event.user_id).first()
                 if user and user.telegram_id:
@@ -54,10 +52,19 @@ async def check_events():
                     except Exception as e:
                         logger.error(f"TG Error: {e}")
 
-            events_to_send = db.query(Event).filter(
-                Event.time_start - timedelta(hours=1) == datetime(now_check.year, now_check.month, now_check.day, now_check.hour, now_check.minute),
-                Event.is_sent == False
+            events_to_send_per_hour = db.query(Event).filter(
+                Event.time_start - timedelta(hours=1) == now_check.time().replace(second=0).replace(microsecond=0),
+                Event.start_date == now_check.date(),
+                # Event.is_sent == False
             ).all()
+
+            events_to_send_now = db.query(Event).filter(
+                Event.time_start == now_check.time().replace(second=0).replace(microsecond=0),
+                Event.start_date == now_check.date(),
+                # Event.is_sent == False
+            ).all()
+
+            events_to_send = events_to_send_per_hour + events_to_send_now
 
             if not events_to_send:
                 return
@@ -75,10 +82,8 @@ async def check_events():
                         event.is_sent = True
                     except Exception as e:
                         logger.error(f"TG Error: {e}")
-                else:
-                    # Если пользователя нет, помечаем как отправленное (или ошибочное),
-                    # чтобы не спамить в лог каждую минуту
-                    event.is_sent = True
+                # else:
+                    # event.is_sent = True
             db.commit()
         except Exception as e:
             logger.error(f"Scheduler error: {e}")

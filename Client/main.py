@@ -551,7 +551,7 @@ class SimplePlanner(QMainWindow):
             notify_at_str = start_str.strftime("%Y-%m-%d %H:%M")
 
             payload = {
-                'event_name': f'Событие: {name}',
+                'event_name': name,
                 'start_date': date_start.strftime("%Y-%m-%d"),
                 'end_date': date_end.strftime("%Y-%m-%d"),
                 'time_start': start_py.strftime("%H:%M"),
