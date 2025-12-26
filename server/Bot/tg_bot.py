@@ -10,69 +10,60 @@ from DB.models import User, Event
 router = Router()
 
 
-def get_db():
-    db = SessionLocal()
-    try:
-        return db
-    finally:
-        db.close()
-
-
-def generate_random_code(length=6):
+def generate_code(length=6):
     return ''.join(random.choices(string.digits, k=length))
 
 
-@router.message(Command("start", "link"))
-async def start(message: types.Message):
-    if not message.from_user:
-        return
-
-    db = get_db()
+@router.message(Command("start"))
+async def cmd_start(message: types.Message):
     telegram_id = str(message.from_user.id)
+    link_code = generate_code()
 
-    user = db.query(User).filter(User.telegram_id == telegram_id).first()
-    link_code = generate_random_code()
+    with SessionLocal() as db:
+        user = db.query(User).filter(User.telegram_id == telegram_id).first()
+        if not user:
+            user = User(telegram_id=telegram_id)
+            db.add(user)
 
-    if user:
-        if user.api_token:
-            await message.answer("Ваше устройство уже связано! Генерирую новый код для перепривязки.")
-
+        # Всегда обновляем код при запросе /start, если токена еще нет или нужна перепривязка
         user.link_code = link_code
         db.commit()
 
-    else:
-        new_user = User(
-            telegram_id=telegram_id,
-            link_code=link_code
+        text = (
+            "🔗 **Связывание устройства**\n"
+            "Введите этот код в приложении на ПК:\n\n"
+            f"**`{link_code}`**"
         )
-        db.add(new_user)
-        db.commit()
+        await message.answer(text, parse_mode="Markdown")
 
-    response_text = (
-        "🔗 **Связывание устройства**\n\n"
-        "1. Откройте настройки Telegram в вашей программе на ПК.\n"
-        "2. Введите этот уникальный код:\n\n"
-        f"**`{link_code}`**\n\n"
-        "Код действителен 15 минут."
-    )
-    await message.answer(response_text, parse_mode="Markdown")
 
 @router.message(Command("events"))
-async def events(message: types.Message, command: CommandObject):
-    if command.args is None:
-        await message.answer('Ошибка - не передано число. Как должна выглядеть комманда:\n/events 27.12.2025 (число, месяц, год)')
+async def cmd_events(message: types.Message, command: CommandObject):
+    if not command.args:
+        await message.answer("Используйте: /events ДД.ММ.ГГГГ")
         return
+
     try:
-        date = datetime.strptime(command.args, '%d.%m.%Y')
+        query_date = datetime.strptime(command.args, '%d.%m.%Y').date()
     except ValueError:
-        await message.answer('Ошибка - не верный формат даты. Как должна выглядеть комманда:\n/events 27.12.2025 (число, месяц, год)')
+        await message.answer("Неверный формат даты.")
         return
-    db = get_db()
-    telegram_id = str(message.from_user.id)
-    user = db.query(User).filter(User.telegram_id == telegram_id).first()
-    abc = db.query(Event).filter(Event.user_id == user.id, Event.start_date == date).all()
-    ev = []
-    for i in abc:
-        ev.append(f'Событие: {i.event_name}\nДата и время начала: {datetime.combine(i.start_date, i.time_start).strftime("%Y-%m-%d %H:%M")}\nДата и время конца: {datetime.combine(i.end_date, i.time_end).strftime("%Y-%m-%d %H:%M")}')
-    await message.answer(f'События на {date.strftime("%Y-%m-%d")}:\n{"\n".join([i for i in ev])}')
-    print(ev)
+
+    with SessionLocal() as db:
+        user = db.query(User).filter(User.telegram_id == str(message.from_user.id)).first()
+        if not user:
+            await message.answer("Вы не зарегистрированы.")
+            return
+
+        events = db.query(Event).filter(Event.user_id == user.id, Event.start_date == query_date).all()
+
+        if not events:
+            await message.answer(f"На {query_date} событий нет.")
+            return
+
+        response = [f"📅 **{query_date}**"]
+        for e in events:
+            time_range = f"{e.time_start.strftime('%H:%M')} - {e.time_end.strftime('%H:%M')}"
+            response.append(f"• {e.event_name} ({time_range})")
+
+        await message.answer("\n".join(response), parse_mode="Markdown")

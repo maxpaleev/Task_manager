@@ -28,58 +28,45 @@ TASK_CATEGORIES = [
 
 # --- НОВОЕ: Класс для безопасной работы с сетью ---
 class NetworkWorker(QObject):
-    finished = pyqtSignal(dict)  # Сигнал успеха
-    error = pyqtSignal(str)  # Сигнал ошибки
+    finished = pyqtSignal(dict)  # Сигнал успеха с данными
+    error = pyqtSignal(str)  # Сигнал ошибки с текстом
 
-    def __init__(self, url, method="POST", payload=None, token=None):
+    def __init__(self, url: str, method="POST", payload: dict = None, token: str = None):
         super().__init__()
         self.url = url
         self.method = method
         self.payload = payload
-        self.token = token
+        self.headers = {'Authorization': f'Bearer {token}'} if token else {}
 
-    # noinspection PyUnresolvedReferences
     def run(self):
-        headers = {}
-        if self.token:
-            headers['Authorization'] = f'Bearer {self.token}'
-
+        """Метод, который будет выполняться в отдельном потоке"""
         try:
             if self.method == "POST":
-                response = requests.post(self.url, json=self.payload, headers=headers)
+                resp = requests.post(self.url, json=self.payload, headers=self.headers)
             elif self.method == "DELETE":
-                response = requests.delete(self.url, headers=headers, timeout=10)
+                resp = requests.delete(self.url, headers=self.headers)
             else:
-                response = requests.get(self.url, headers=headers)
+                resp = requests.get(self.url, headers=self.headers)
 
-            response.raise_for_status()
-            try:
-                data = response.json()
-            except:
-                data = {}
+            resp.raise_for_status()  # Вызовет ошибку, если код не 200
+
+            # Пытаемся вернуть JSON, если есть тело ответа
+            data = resp.json() if resp.content else {}
             self.finished.emit(data)
 
-        except HTTPError as http_err:
-            try:
-                detail = http_err.response.json().get('detail', http_err.response.text)
-            except:
-                detail = str(http_err)
-            self.error.emit(f"Ошибка сервера: {detail}")
-        except Exception as e:
+        except requests.exceptions.RequestException as e:
             self.error.emit(f"Ошибка сети: {str(e)}")
+        except Exception as e:
+            self.error.emit(f"Ошибка: {str(e)}")
 
 
 class SimplePlanner(QMainWindow):
 
     def __init__(self):
         super().__init__()
-
-        # Загрузка интерфейса из файла
-
         try:
             uic.loadUi('Client/design_test.ui', self)
         except Exception as e:
-            # Если папка Client не найдена, ищем рядом
             try:
                 uic.loadUi('design_test.ui', self)
             except:
@@ -611,7 +598,6 @@ class SimplePlanner(QMainWindow):
             if matching:
                 root_item = QTreeWidgetItem([date_key.strftime("%d.%m.%Y")])
 
-
                 date = QDate(date_key.year, date_key.month, date_key.day)
                 fmt = QTextCharFormat()
                 fmt.setBackground(self.color)
@@ -735,7 +721,7 @@ class SimplePlanner(QMainWindow):
                 self.thread.start()
 
         else:
-# --- Удаление всех событий за день ---
+            # --- Удаление всех событий за день ---
             QMessageBox.information(self, "Внимание", "При удалении целого дня, удаление происходит только локально.")
             date_key = item.data(0, Qt.ItemDataRole.UserRole)
             date_str = date_key.strftime("%Y-%m-%d")

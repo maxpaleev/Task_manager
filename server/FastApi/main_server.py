@@ -100,7 +100,6 @@ async def lifespan(app: FastAPI):
     scheduler.start()
 
     dp.include_router(bot_router)
-    # Запускаем поллинг в фоне
     polling_task = asyncio.create_task(dp.start_polling(bot))
 
     yield  # Приложение работает здесь
