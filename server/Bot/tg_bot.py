@@ -63,7 +63,10 @@ async def cmd_events(message: types.Message, command: CommandObject):
 
         response = [f"📅 **{query_date}**"]
         for e in events:
-            time_range = f"{e.time_start.strftime('%H:%M')} - {e.time_end.strftime('%H:%M')}"
-            response.append(f"• {e.event_name} ({time_range})")
+            if e.start_date == e.end_date:
+                time_range = f"{e.time_start.strftime('%H:%M')} - {e.time_end.strftime('%H:%M')}"
+                response.append(f"• {e.event_name} ({time_range})")
+            else:
+                response.append(f"• {e.event_name} ({e.start_date.strftime('%d.%m.%Y')}{e.time_start.strftime(' %H:%M')} - {e.end_date.strftime('%d.%m.%Y')}{e.time_end.strftime(' %H:%M')})")
 
         await message.answer("\n".join(response), parse_mode="Markdown")

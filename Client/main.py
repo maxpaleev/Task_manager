@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtGui import QFont, QTextCharFormat, QColor
 
+# --- ГЛОБАЛЬНЫЕ КОНСТАНТЫ ---
 # SERVER_URL = "http://10.62.25.171:8000"
 SERVER_URL = "http://127.0.0.1:8000"
 DB_FILE = 'planner.db'
@@ -26,7 +27,10 @@ TASK_CATEGORIES = [
 ]
 
 
-# --- НОВОЕ: Класс для безопасной работы с сетью ---
+# ===================================================================
+# БЛОК 1: СЕТЕВАЯ ИНФРАСТРУКТУРА (МНОГОПОТОЧНОСТЬ)
+# ===================================================================
+
 class NetworkWorker(QObject):
     finished = pyqtSignal(dict)  # Сигнал успеха с данными
     error = pyqtSignal(str)  # Сигнал ошибки с текстом
@@ -39,7 +43,6 @@ class NetworkWorker(QObject):
         self.headers = {'Authorization': f'Bearer {token}'} if token else {}
 
     def run(self):
-        """Метод, который будет выполняться в отдельном потоке"""
         try:
             if self.method == "POST":
                 resp = requests.post(self.url, json=self.payload, headers=self.headers)
@@ -48,9 +51,7 @@ class NetworkWorker(QObject):
             else:
                 resp = requests.get(self.url, headers=self.headers)
 
-            resp.raise_for_status()  # Вызовет ошибку, если код не 200
-
-            # Пытаемся вернуть JSON, если есть тело ответа
+            resp.raise_for_status()
             data = resp.json() if resp.content else {}
             self.finished.emit(data)
 
@@ -59,6 +60,10 @@ class NetworkWorker(QObject):
         except Exception as e:
             self.error.emit(f"Ошибка: {str(e)}")
 
+
+# ===================================================================
+# БЛОК 2: ОСНОВНОЕ ПРИЛОЖЕНИЕ
+# ===================================================================
 
 class SimplePlanner(QMainWindow):
 
@@ -75,85 +80,47 @@ class SimplePlanner(QMainWindow):
 
         self.setWindowTitle('Минипланировщик')
 
-        # Инициализация переменных (ТВОЙ КОД)
+        # --- Состояние данных ---
         self.events: Dict[datetime.date, List[Tuple[str, datetime.date, datetime.time, datetime.time, int]]] = {}
         self.tasks: Dict[str, List[Tuple[str, str, int]]] = {cat: [] for cat in TASK_CATEGORIES}
         self.tg_enabled = False
         self.color = QColor('#FF7F50')
         self.current_date = 1
-        self._init_db()
+        self.current_importance = TASK_CATEGORIES[0]
         self.global_font = QFont('Segoe UI', 8)
+
+        # --- Настройка системы ---
+        self._init_db()
+        self.load_data()
+        self._setup_tree_widgets()
         app.setFont(self.global_font)
 
-        self.load_data()
-        self.current_importance = TASK_CATEGORIES[0]
-
-        self._setup_tree_widgets()
-
-        # Инициализация таймера (ТВОЙ КОД)
+        # --- Настройка таймера для уведомлений ---
         self.last_alert_minute = -1
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.check_alerts)
         self.timer.start(5000)
 
-        # Соединение сигналов (ТВОЙ КОД)
+        # --- Подключение сигналов (Events) ---
         self.addEventBtn.clicked.connect(self.add_event)
         self.calendarWidget.clicked.connect(self.date_changed_widget)
         self.searchEvent.textChanged.connect(self.update_event_list)
+
+        # --- Подключение сигналов (Tasks) ---
         self.taskButton.clicked.connect(self.add_task)
         self.searchTask.textChanged.connect(self.update_task_list)
         self.importanceChoice.buttonClicked.connect(self._set_importance)
         self.taskDes.setMaxLength(100)
+        # --- Настройки и Внешний вид ---
         self.tgButton.clicked.connect(self.open_telegram_dialog)
         self.fontsize.valueChanged.connect(self.change_font_size)
         self.fontBox.currentTextChanged.connect(self.change_font)
         self.colorButton.clicked.connect(self.change_color)
         self.reset_colorButton.clicked.connect(self.reset_color)
 
-    def change_font_size(self):
-        size = self.fontsize.value()
-        font = self.fontBox.currentText()
-        self.global_font.setPointSize(size)
-        app.setFont(self.global_font)
-        query = "INSERT OR REPLACE INTO settings (id, font_size, font) VALUES (1, ?, ?)"
-        self._execute_query(query, (size, font,), commit=True)
-
-    def change_font(self):
-        size = self.fontsize.value()
-        font = self.fontBox.currentText()
-        self.global_font.setFamily(font)
-        app.setFont(self.global_font)
-        query = "INSERT OR REPLACE INTO settings (id, font, font_size) VALUES (1, ?, ?)"
-        self._execute_query(query, (font, size,), commit=True)
-
-    def change_color(self):
-        color = QColorDialog.getColor()
-        if color.isValid():
-            self.color = color
-            self.update_event_list()
-            query = "INSERT OR REPLACE INTO settings (id, color) VALUES (1, ?)"
-            self._execute_query(query, (color.name(),), commit=True)
-
-    def reset_color(self):
-        if self.color.isValid():
-            self.color = QColor('#FF7F50')
-            self.update_event_list()
-            query = "INSERT OR REPLACE INTO settings (id, color) VALUES (1, ?)"
-            self._execute_query(query, ('#FF7F50',), commit=True)
-
-    def date_changed_widget(self):
-        if self.calendarWidget.selectedDate() and self.current_date == 1:
-            self.dateStart.setDate(self.calendarWidget.selectedDate())
-            self.dateEnd.setDate(self.calendarWidget.selectedDate())
-            self.current_date = 2
-        elif self.calendarWidget.selectedDate() and self.current_date == 2:
-            self.dateEnd.setDate(self.calendarWidget.selectedDate())
-            self.current_date = 1
-
     # -------------------------------------------------------------------
-    # ОБЩИЙ МЕТОД ДЛЯ РАБОТЫ С БД
+    # БЛОК 3: РАБОТА С БАЗОЙ ДАННЫХ
     # -------------------------------------------------------------------
-
     def _execute_query(self, query: str, params: Tuple = (), commit: bool = False, fetch_all: bool = False):
         conn = None
         try:
@@ -176,18 +143,14 @@ class SimplePlanner(QMainWindow):
             if conn:
                 conn.close()
 
-    # -------------------------------------------------------------------
-    # ЛОГИКА БД
-    # -------------------------------------------------------------------
-
     def _init_db(self):
-        """Инициализация локальной базы данных SQLite."""
         conn = None
         try:
             conn = sqlite3.connect(DB_FILE)
             cursor = conn.cursor()
 
-            cursor.execute('''
+            queries = [
+                '''
                 CREATE TABLE IF NOT EXISTS events (
                     id INTEGER PRIMARY KEY,
                     name TEXT NOT NULL,
@@ -198,9 +161,7 @@ class SimplePlanner(QMainWindow):
                     is_completed INTEGER DEFAULT 0,
                     server_id INTEGER NULL
                 )
-            ''')
-
-            queries = [
+                ''',
                 '''
                 CREATE TABLE IF NOT EXISTS tasks (
                     id INTEGER PRIMARY KEY,
@@ -238,9 +199,9 @@ class SimplePlanner(QMainWindow):
         for category in TASK_CATEGORIES:
             self.tasks[category] = []
 
+        # Загрузка событий
         event_rows = self._execute_query(
-            "SELECT name, start_date, end_date, time_start, time_end, is_completed FROM events ORDER BY start_date, "
-            "time_start",
+            "SELECT name, start_date, end_date, time_start, time_end, is_completed FROM events ORDER BY start_date, time_start",
             fetch_all=True
         )
         if event_rows:
@@ -250,80 +211,60 @@ class SimplePlanner(QMainWindow):
                     date_end_obj = datetime.datetime.strptime(end_date, "%Y-%m-%d").date()
                     time_start_obj = datetime.datetime.strptime(time_start, "%H:%M").time()
                     time_end_obj = datetime.datetime.strptime(time_end, "%H:%M").time()
-
                     if date_start_obj not in self.events:
                         self.events[date_start_obj] = []
                     self.events[date_start_obj].append((name, date_end_obj, time_start_obj, time_end_obj, is_completed))
                 except ValueError:
-                    self.QMessageBox.warning(self, "Ошибка", "Некорректные данные в базе данных")
+                    print("Ошибка парсинга даты/времени")
 
-        task_rows = self._execute_query(
-            "SELECT name, description, category, is_completed FROM tasks",
-            fetch_all=True
-        )
+        # Загрузка задач
+        task_rows = self._execute_query("SELECT name, description, category, is_completed FROM tasks", fetch_all=True)
         if task_rows:
             for name, desc, cat, is_completed in task_rows:
                 if cat in self.tasks:
                     self.tasks[cat].append((name, desc, is_completed))
 
-        self.tg_enabled = self._execute_query('SELECT tg_enabled FROM settings', fetch_all=True)
-        if self.tg_enabled:
-            if self.tg_enabled[0][0] == 1:
-                self.tgButton.setText('Связано')
-
-        size = self._execute_query('SELECT font_size FROM settings', fetch_all=True)
-        font = self._execute_query('SELECT font FROM settings', fetch_all=True)
-        color = self._execute_query('SELECT color FROM settings', fetch_all=True)
-        if size:
-            self.fontsize.setValue(size[0][0])
-            self.global_font.setPointSize(size[0][0])
+        # Загрузка настроек
+        settings_res = self._execute_query('SELECT tg_enabled, font_size, font, color FROM settings WHERE id = 1',
+                                           fetch_all=True)
+        if settings_res:
+            tg_en, size, font, color = settings_res[0]
+            if tg_en == 1: self.tgButton.setText('Связано')
+            if size:
+                self.fontsize.setValue(size)
+                self.global_font.setPointSize(size)
+            if font:
+                self.fontBox.setCurrentText(font)
+                self.global_font.setFamily(font)
+            if color and color != '#FF7F50':
+                self.color = QColor(color)
             app.setFont(self.global_font)
-        if font:
-            self.fontBox.setCurrentText(font[0][0])
-            self.global_font.setFamily(font[0][0])
-            app.setFont(self.global_font)
-        if color != '#FF7F50':
-            if color:
-                self.color = QColor(color[0][0])
-                self.update_event_list()
 
         self.update_event_list()
         self.update_task_list()
 
     # -------------------------------------------------------------------
-    # ЛОГИКА ДЕРЕВЬЕВ
+    # БЛОК 4: ИНТЕРФЕЙС СПИСКОВ (TreeWidgets) И КОНТЕКСТНЫЕ МЕНЮ
     # -------------------------------------------------------------------
 
     def _setup_tree_widgets(self):
-        self.eventList.setColumnCount(2)
-        self.eventList.setHeaderLabels(["Событие", "Время"])
-        self.eventList.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.eventList.customContextMenuRequested.connect(
-            lambda pos: self.show_context_menu(self.eventList, pos)
-        )
-
-        self.taskList.setColumnCount(2)
-        self.taskList.setHeaderLabels(["Название", "Описание"])
-        self.taskList.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.taskList.customContextMenuRequested.connect(
-            lambda pos: self.show_context_menu(self.taskList, pos)
-        )
+        """Первоначальная настройка QTreeWidget"""
+        for tw, labels in [(self.eventList, ["Событие", "Время"]), (self.taskList, ["Название", "Описание"])]:
+            tw.setColumnCount(2)
+            tw.setHeaderLabels(labels)
+            tw.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            tw.customContextMenuRequested.connect(lambda pos, widget=tw: self.show_context_menu(widget, pos))
 
     def show_context_menu(self, tree_widget, position):
         item = tree_widget.itemAt(position)
-        if not item:
-            return
+        if not item: return
 
         menu = QMenu(self)
-
-        # Новые действия
         action_toggle_done = None
 
-        # Проверяем, что это список событий и это само событие (а не дата)
         if tree_widget is self.eventList and item.parent():
-            # Получаем данные, чтобы понять, какой текст показать
             ev_data = item.data(0, Qt.ItemDataRole.UserRole)
-            is_completed = ev_data[4]  # 4-й элемент
+            is_completed = ev_data[4]
             text = "Отменить выполнение" if is_completed else "Выполнить"
             action_toggle_done = menu.addAction(text)
             menu.addSeparator()
@@ -398,7 +339,6 @@ class SimplePlanner(QMainWindow):
             name, desc, _ = task_data
             self.taskName.setText(name)
             self.taskDes.setText(desc)
-
             self.current_importance = category_name
             for btn in self.importanceChoice.buttons():
                 if btn.event_name() == category_name:
@@ -406,7 +346,7 @@ class SimplePlanner(QMainWindow):
                     break
 
     # -------------------------------------------------------------------
-    # ЛОГИКА Telegram
+    # БЛОК 5: ЛОГИКА ТЕЛЕГРАМ И СЕТИ
     # -------------------------------------------------------------------
 
     def _get_api_token(self) -> str | None:
@@ -464,7 +404,7 @@ class SimplePlanner(QMainWindow):
         self.tgButton.setEnabled(True)
 
     # -------------------------------------------------------------------
-    # ЛОГИКА УВЕДОМЛЕНИЙ
+    # БЛОК 6: ЛОГИКА УВЕДОМЛЕНИЙ (Windows Notifications)
     # -------------------------------------------------------------------
 
     def check_alerts(self):
@@ -496,7 +436,7 @@ class SimplePlanner(QMainWindow):
             print(f"Не удалось отправить Windows уведомление: {e}")
 
     # -------------------------------------------------------------------
-    # ЛОГИКА СОБЫТИЙ
+    # БЛОК 7: УПРАВЛЕНИЕ СОБЫТИЯМИ (Events)
     # -------------------------------------------------------------------
 
     def add_event(self):
@@ -787,9 +727,9 @@ class SimplePlanner(QMainWindow):
         self._execute_query(query, params, commit=True)
         self.load_data()
 
-    # ------------------------------------------------------------------
-    # ЛОГИКА ЗАДАЧ (Tasks)
-    # ------------------------------------------------------------------
+    # -------------------------------------------------------------------
+    # БЛОК 8: УПРАВЛЕНИЕ ЗАДАЧАМИ (Tasks)
+    # -------------------------------------------------------------------
 
     def _set_importance(self, button):
         self.current_importance = button.text()
@@ -884,6 +824,50 @@ class SimplePlanner(QMainWindow):
 
         self._execute_query(query, params, commit=True)
         self.load_data()  # Перезагружаем интерфейс
+
+    # -------------------------------------------------------------------
+    # БЛОК 9: НАСТРОЙКИ UI И ЦВЕТА
+    # -------------------------------------------------------------------
+
+    def change_font_size(self):
+        size = self.fontsize.value()
+        font = self.fontBox.currentText()
+        self.global_font.setPointSize(size)
+        app.setFont(self.global_font)
+        query = "INSERT OR REPLACE INTO settings (id, font_size, font) VALUES (1, ?, ?)"
+        self._execute_query(query, (size, font,), commit=True)
+
+    def change_font(self):
+        size = self.fontsize.value()
+        font = self.fontBox.currentText()
+        self.global_font.setFamily(font)
+        app.setFont(self.global_font)
+        query = "INSERT OR REPLACE INTO settings (id, font, font_size) VALUES (1, ?, ?)"
+        self._execute_query(query, (font, size,), commit=True)
+
+    def change_color(self):
+        color = QColorDialog.getColor()
+        if color.isValid():
+            self.color = color
+            self.update_event_list()
+            query = "INSERT OR REPLACE INTO settings (id, color) VALUES (1, ?)"
+            self._execute_query(query, (color.name(),), commit=True)
+
+    def reset_color(self):
+        if self.color.isValid():
+            self.color = QColor('#FF7F50')
+            self.update_event_list()
+            query = "INSERT OR REPLACE INTO settings (id, color) VALUES (1, ?)"
+            self._execute_query(query, ('#FF7F50',), commit=True)
+
+    def date_changed_widget(self):
+        if self.calendarWidget.selectedDate() and self.current_date == 1:
+            self.dateStart.setDate(self.calendarWidget.selectedDate())
+            self.dateEnd.setDate(self.calendarWidget.selectedDate())
+            self.current_date = 2
+        elif self.calendarWidget.selectedDate() and self.current_date == 2:
+            self.dateEnd.setDate(self.calendarWidget.selectedDate())
+            self.current_date = 1
 
 
 if __name__ == '__main__':
