@@ -4,8 +4,8 @@ import string
 from aiogram import Router, types
 from aiogram.filters import Command, CommandObject
 from datetime import datetime
-from DB.database import SessionLocal
-from DB.models import User, Event
+from server.DB.database import SessionLocal
+from server.DB.models import User, Event
 
 router = Router()
 

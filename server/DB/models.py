@@ -11,6 +11,7 @@ class User(Base):
     api_token = Column(String, unique=True, index=True, nullable=True) # Добавлено nullable=True
     link_code = Column(String, unique=True, nullable=True)
     events = relationship("Event", back_populates="owner")
+    tasks = relationship("Task", back_populates="owner")
 
 class Event(Base):
     __tablename__ = 'events'
@@ -26,3 +27,14 @@ class Event(Base):
     is_sent = Column(Boolean, default=0)
     is_completed = Column(Integer, default=False)
     owner = relationship("User", back_populates="events")
+
+class Task(Base):
+    __tablename__ = 'tasks'
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey('users.id'))
+    name = Column(String, nullable=False)
+    description = Column(String, nullable=True)
+    category = Column(String, nullable=True)
+    is_completed = Column(Boolean, default=False)
+    owner = relationship("User", back_populates="tasks")

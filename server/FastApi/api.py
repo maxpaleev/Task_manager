@@ -3,11 +3,10 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Header
 from sqlalchemy.orm import Session
-from datetime import datetime
 
-from DB.database import get_db
-from DB.models import Event, User
-from .schemas import EventCreate, LinkCode
+from server.DB.database import get_db
+from server.DB.models import Event, User, Task
+from .schemas import EventCreate, LinkCode, TaskCreate
 
 router = APIRouter()
 
@@ -81,3 +80,20 @@ def delete_event(
     db.delete(event)
     db.commit()
     return {"status": "success"}
+
+@router.post("/tasks")
+def create_task(
+        task_data: TaskCreate,
+        current_user: User = AuthenticatedUser,
+        db: Session = Depends(get_db)
+):
+    new_task = Task(
+        user_id=current_user.id,
+        name=task_data.name,
+        description=task_data.description,
+        category=task_data.category,
+        is_completed=task_data.is_completed
+    )
+    db.add(new_task)
+    db.commit()
+    return {"status": "success", "id": new_task.id}

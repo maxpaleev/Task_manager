@@ -1,4 +1,5 @@
 from pydantic import BaseModel
+from typing import Optional
 from datetime import datetime, date, time
 
 
@@ -13,3 +14,9 @@ class EventCreate(BaseModel):
 
 class LinkCode(BaseModel):
     code: str
+
+class TaskCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+    category: str
+    is_completed: int

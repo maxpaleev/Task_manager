@@ -1,7 +1,10 @@
 import sys
 import datetime
 import sqlite3
+from multiprocessing.pool import worker
+
 import requests
+from datetime import datetime
 import json
 from typing import Dict, List, Tuple
 from requests.exceptions import RequestException, HTTPError
@@ -11,9 +14,10 @@ from plyer import notification
 from PyQt6 import uic
 from PyQt6.QtCore import Qt, QDate, QTime, QTimer, QThread, pyqtSignal, QObject
 from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QMessageBox, QTreeWidgetItem, QMenu, QTreeWidget, QInputDialog, QColorDialog
+    QApplication, QMainWindow, QMessageBox, QTreeWidgetItem, QMenu, QTreeWidget, QInputDialog, QColorDialog,
+    QSystemTrayIcon, QStyle
 )
-from PyQt6.QtGui import QFont, QTextCharFormat, QColor
+from PyQt6.QtGui import QFont, QTextCharFormat, QColor, QAction
 
 # --- ГЛОБАЛЬНЫЕ КОНСТАНТЫ ---
 # SERVER_URL = "http://10.62.25.171:8000"
@@ -118,6 +122,8 @@ class SimplePlanner(QMainWindow):
         self.colorButton.clicked.connect(self.change_color)
         self.reset_colorButton.clicked.connect(self.reset_color)
 
+        self._setup_tray_icon()
+
     # -------------------------------------------------------------------
     # БЛОК 3: РАБОТА С БАЗОЙ ДАННЫХ
     # -------------------------------------------------------------------
@@ -168,7 +174,8 @@ class SimplePlanner(QMainWindow):
                     name TEXT NOT NULL,
                     description TEXT,
                     category TEXT NOT NULL,
-                    is_completed INTEGER DEFAULT 0
+                    is_completed INTEGER DEFAULT 0,
+                    server_id INTEGER NULL
                 )
                 ''',
                 '''
@@ -207,10 +214,10 @@ class SimplePlanner(QMainWindow):
         if event_rows:
             for name, start_date, end_date, time_start, time_end, is_completed in event_rows:
                 try:
-                    date_start_obj = datetime.datetime.strptime(start_date, "%Y-%m-%d").date()
-                    date_end_obj = datetime.datetime.strptime(end_date, "%Y-%m-%d").date()
-                    time_start_obj = datetime.datetime.strptime(time_start, "%H:%M").time()
-                    time_end_obj = datetime.datetime.strptime(time_end, "%H:%M").time()
+                    date_start_obj = datetime.strptime(start_date, "%Y-%m-%d").date()
+                    date_end_obj = datetime.strptime(end_date, "%Y-%m-%d").date()
+                    time_start_obj = datetime.strptime(time_start, "%H:%M").time()
+                    time_end_obj = datetime.strptime(time_end, "%H:%M").time()
                     if date_start_obj not in self.events:
                         self.events[date_start_obj] = []
                     self.events[date_start_obj].append((name, date_end_obj, time_start_obj, time_end_obj, is_completed))
@@ -341,7 +348,7 @@ class SimplePlanner(QMainWindow):
             self.taskDes.setText(desc)
             self.current_importance = category_name
             for btn in self.importanceChoice.buttons():
-                if btn.event_name() == category_name:
+                if btn.text() == category_name:
                     btn.setChecked(True)
                     break
 
@@ -408,8 +415,8 @@ class SimplePlanner(QMainWindow):
     # -------------------------------------------------------------------
 
     def check_alerts(self):
-        current_time = datetime.datetime.now().time()
-        current_date = datetime.date.today()
+        current_time = datetime.now().time()
+        current_date = datetime.today()
 
         if self.last_alert_minute == current_time.minute:
             return
@@ -474,7 +481,7 @@ class SimplePlanner(QMainWindow):
         # 2. Подготовка и отправка на сервер (ЧЕРЕЗ WORKER)
         token = self._get_api_token()
         if token:
-            start_str = datetime.datetime.combine(date_start, start_py)
+            start_str = datetime.combine(date_start, start_py)
             notify_at_str = start_str.strftime("%Y-%m-%d %H:%M")
 
             payload = {
@@ -546,12 +553,12 @@ class SimplePlanner(QMainWindow):
                 # Устанавливаем формат даты в календаре idget
                 root_item.setData(0, Qt.ItemDataRole.UserRole, date_key)
 
-                for ev in sorted(matching, key=lambda x: (x[2], x[4])):
+                for ev in sorted(matching, key=lambda x: (x[4], x[2])):
                     name, date_end, start, end, is_completed = ev
                     if date_end == date:
                         time_str = f"{start.strftime('%H:%M')} - {end.strftime('%H:%M')}"
                     else:
-                        time_str = f"{datetime.datetime.combine(date_key, start).strftime('%d.%m.%Y %H:%M')} - {datetime.datetime.combine(date_end, end).strftime('%d.%m.%Y %H:%M')}"
+                        time_str = f"{datetime.combine(date_key, start).strftime('%d.%m.%Y %H:%M')} - {datetime.combine(date_end, end).strftime('%d.%m.%Y %H:%M')}"
                         for i in range(date_key.day + 1, date_end.day):
                             _date = QDate(date_key.year, date_key.month, i)
                             fmt = QTextCharFormat()
@@ -736,22 +743,53 @@ class SimplePlanner(QMainWindow):
 
     def add_task(self):
         name = self.taskName.text().strip()
-        desc = self.taskDes.text().strip()
-
         if not name:
             QMessageBox.warning(self, "Ошибка", "Введите название задачи")
             return
+        desc = self.taskDes.text().strip()
+        category = self.current_importance
+        print(name, desc, category)
 
-        success = self._execute_query(
-            '''INSERT INTO tasks (name, description, category, is_completed) VALUES (?, ?, ?, 0)''',
-            (name, desc, self.current_importance),
-            commit=True
-        )
 
-        if success:
-            self.taskName.clear()
-            self.taskDes.clear()
-            self.load_data()
+        query = 'INSERT INTO tasks (name, description, category, is_completed) VALUES (?, ?, ?, 0)'
+        params = (name, desc, category)
+
+        cursor = self._execute_query(query, params, commit=True)
+        local_id = cursor.lastrowid if cursor else None
+
+        token = self._get_api_token()
+        if token:
+            payload = {
+                'name': name,
+                'description': desc,
+                'category': category,
+                'is_completed': 0
+            }
+            print(payload)
+            self.task_thread = QThread()
+            self.task_worker = NetworkWorker(f"{SERVER_URL}/tasks", payload=payload, token=token)
+            self.task_worker.moveToThread(self.task_thread)
+
+            self.task_thread.started.connect(self.task_worker.run)
+            self.task_worker.finished.connect(lambda res: self._on_task_sent(res, local_id))
+
+            self.task_worker.finished.connect(self.task_thread.quit)
+            self.task_worker.finished.connect(self.task_worker.deleteLater)
+            self.task_thread.finished.connect(self.task_thread.deleteLater)
+            self.task_thread.start()
+        self.taskName.clear()
+        self.taskDes.clear()
+        self.load_data()
+
+    def _on_task_sent(self, response, local_id):
+        server_id = response.get('id')
+        if server_id:
+            query = "UPDATE tasks SET server_id = ? WHERE id = ?"
+            self._execute_query(query, (server_id, local_id), commit=True)
+            print(f"Синхронизировано: local={local_id}, server={server_id}")
+
+
+
 
     def update_task_list(self):
         search = self.searchTask.text().lower()
@@ -868,6 +906,41 @@ class SimplePlanner(QMainWindow):
         elif self.calendarWidget.selectedDate() and self.current_date == 2:
             self.dateEnd.setDate(self.calendarWidget.selectedDate())
             self.current_date = 1
+
+    def _setup_tray_icon(self):
+        self.tray_icon = QSystemTrayIcon(self)
+        self.tray_icon.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon))
+
+        tray_menu = QMenu()
+
+        show_action = QAction("Показать", self)
+        show_action.triggered.connect(self.showNormal)
+
+        quit_action = QAction("Выход", self)
+        quit_action.triggered.connect(QApplication.instance().quit)
+
+        tray_menu.addAction(show_action)
+        tray_menu.addSeparator()
+        tray_menu.addAction(quit_action)
+
+        self.tray_icon.setContextMenu(tray_menu)
+        self.tray_icon.activated.connect(self._on_tray_icon_activated)
+        self.tray_icon.show()
+
+    def _on_tray_icon_activated(self, reason):
+        if reason == QSystemTrayIcon.ActivationReason.Trigger:
+            if self.isVisible():
+                self.hide()
+            else:
+                self.showNormal()
+
+    def closeEvent(self, event):
+        if hasattr(self, 'tray_icon') and self.tray_icon.isVisible():
+            self.hide()
+            event.ignore()
+        else:
+            event.accept()
+
 
 
 if __name__ == '__main__':

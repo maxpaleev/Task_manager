@@ -1,5 +1,5 @@
-from DB.database import engine, Base
-from DB.models import User, Event
+from DB import engine, Base
+
 
 def create_tables():
     Base.metadata.create_all(bind=engine)

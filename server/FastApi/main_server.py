@@ -1,18 +1,16 @@
 import logging
-import random
 import asyncio
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta
 from contextlib import asynccontextmanager
 
 import uvicorn
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI
 from aiogram import Bot, Dispatcher
 from server.Bot.tg_bot import router as bot_router
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from sqlalchemy.orm import Session
 
-from DB.database import engine, Base, SessionLocal, get_db
-from DB.models import User, Event
+from server.DB.database import engine, Base, SessionLocal
+from server.DB.models import User, Event
 from server.FastApi.api import router as api_router
 
 logging.basicConfig(level=logging.INFO)
