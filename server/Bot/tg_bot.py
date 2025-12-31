@@ -5,7 +5,7 @@ from aiogram import Router, types
 from aiogram.filters import Command, CommandObject
 from datetime import datetime
 from server.DB.database import SessionLocal
-from server.DB.models import User, Event
+from server.DB.models import User, Event, Task
 
 router = Router()
 
@@ -67,6 +67,35 @@ async def cmd_events(message: types.Message, command: CommandObject):
                 time_range = f"{e.time_start.strftime('%H:%M')} - {e.time_end.strftime('%H:%M')}"
                 response.append(f"• {e.event_name} ({time_range})")
             else:
-                response.append(f"• {e.event_name} ({e.start_date.strftime('%d.%m.%Y')}{e.time_start.strftime(' %H:%M')} - {e.end_date.strftime('%d.%m.%Y')}{e.time_end.strftime(' %H:%M')})")
+                response.append(
+                    f"• {e.event_name} ({e.start_date.strftime('%d.%m.%Y')}{e.time_start.strftime(' %H:%M')} - {e.end_date.strftime('%d.%m.%Y')}{e.time_end.strftime(' %H:%M')})")
 
+        await message.answer("\n".join(response), parse_mode="Markdown")
+
+
+@router.message(Command("tasks"))
+async def cmd_tasks(message: types.Message):
+    with SessionLocal() as db:
+        user = db.query(User).filter(User.telegram_id == str(message.from_user.id)).first()
+        if not user:
+            await message.answer("Вы не зарегистрированы.")
+            return
+        tasks = db.query(Task).filter(Task.user_id == user.id).all()
+        if not tasks:
+            await message.answer("У вас нет задач.")
+            return
+        response = [f"📝 **Ваши задачи**"]
+        category = {}
+        for task in tasks:
+            if task.category in category:
+                category[task.category].append((task.name, task.description))
+            else:
+                category[task.category] = [(task.name, task.description)]
+        for cat in category:
+            response.append(f"• {cat}")
+            for task in category[cat]:
+                if task[1]:
+                    response.append(f"    ◦ {task[0]} ({task[1]})")
+                else:
+                    response.append(f"    ◦ {task[0]}")
         await message.answer("\n".join(response), parse_mode="Markdown")
