@@ -39,15 +39,7 @@ async def cmd_start(message: types.Message):
 
 @router.message(Command("events"))
 async def cmd_events(message: types.Message, command: CommandObject):
-    if not command.args:
-        await message.answer("Используйте: /events ДД.ММ.ГГГГ")
-        return
 
-    try:
-        query_date = datetime.strptime(command.args, '%d.%m.%Y').date()
-    except ValueError:
-        await message.answer("Неверный формат даты.")
-        return
 
     with SessionLocal() as db:
         user = db.query(User).filter(User.telegram_id == str(message.from_user.id)).first()
@@ -55,7 +47,24 @@ async def cmd_events(message: types.Message, command: CommandObject):
             await message.answer("Вы не зарегистрированы.")
             return
 
+        if not command.args:
+            dates = db.query(Event.start_date).filter(Event.user_id == user.id).all()
+            if dates:
+                await message.answer(text="Чтобы вывести события на дату, введите команду \n/events (ДД.ММ.ГГГГ)\n"
+                                          "\nДоступные даты:\n" + "\n".join([str(date[0]) for date in dates]))
+            else:
+                await message.answer(text="Доступных дат нет.")
+            return
+
+        try:
+            query_date = datetime.strptime(command.args, '%d.%m.%Y').date()
+        except ValueError:
+            await message.answer("Неверный формат даты.")
+            return
+
         events = db.query(Event).filter(Event.user_id == user.id, Event.start_date == query_date).all()
+
+
 
         if not events:
             await message.answer(f"На {query_date} событий нет.")
