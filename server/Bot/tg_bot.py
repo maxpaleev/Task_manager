@@ -53,6 +53,11 @@ async def cmd_start(message: types.Message):
         await message.answer(text, parse_mode="Markdown")
 
 
+# -------------------------------------------------------------------
+# Логика событий
+# -------------------------------------------------------------------
+
+
 @router.message(Command("events"))
 async def cmd_events(message: types.Message, command: CommandObject):
     with SessionLocal() as db:
@@ -138,6 +143,7 @@ async def create_event_end(message: types.Message, state: FSMContext):
     except ValueError:
         await message.answer("Неверный формат даты или времени.")
         return
+    data = await state.get_data()
     await message.answer(f"Название: {data['name']}\n"
                          f"Дата начала: {data['start_date']} {data['time_start'].strftime('%H:%M')}\n"
                          f"Дата окончания: {data['date_end']} {data['time_end'].strftime('%H:%M')}\n"
@@ -171,6 +177,11 @@ async def create_event_chose(message: types.Message, state: FSMContext):
     elif message.text.lower() == "нет":
         await message.answer("Введите название события")
         await state.set_state(CreateEvent.name)
+
+
+# -------------------------------------------------------------------
+# Логика задач
+# -------------------------------------------------------------------
 
 
 @router.message(Command("tasks"))
@@ -213,6 +224,7 @@ async def create_task_name(message: types.Message, state: FSMContext):
     await state.update_data(name=message.text)
     await state.set_state(CreateTask.description)
 
+
 @router.message(CreateTask.description)
 async def create_task_description(message: types.Message, state: FSMContext):
     if message.text.lower() == "нет":
@@ -225,6 +237,7 @@ async def create_task_description(message: types.Message, state: FSMContext):
                          "3. Срочно, но не важно\n"
                          "4. Не срочно и не важно")
     await state.set_state(CreateTask.category)
+
 
 @router.message(CreateTask.category)
 async def create_task_category(message: types.Message, state: FSMContext):
@@ -264,4 +277,3 @@ async def create_task_check(message: types.Message, state: FSMContext):
     elif message.text.lower() == "нет":
         await message.answer("Введите название задачи")
         await state.set_state(CreateTask.name)
-

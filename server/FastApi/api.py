@@ -1,12 +1,12 @@
 import uuid
-from typing import Annotated
+from typing import Annotated, List
 
 from fastapi import APIRouter, Depends, HTTPException, Header
 from sqlalchemy.orm import Session
 
 from server.DB.database import get_db
 from server.DB.models import Event, User, Task
-from .schemas import EventCreate, LinkCode, TaskCreate
+from .schemas import EventCreate, LinkCode, TaskCreate, EventResponse, EventUpdate, TaskResponse, TaskUpdate
 
 router = APIRouter()
 
@@ -43,6 +43,13 @@ def link_device(link_data: LinkCode, db: Session = Depends(get_db)):
     return {"status": "success", "api_token": new_token}
 
 
+@router.get("/events", response_model=List[EventResponse])
+def get_events(
+        current_user: User = AuthenticatedUser,
+        db: Session = Depends(get_db)
+):
+    return db.query(Event).filter(Event.user_id == current_user.id).all()
+
 @router.post("/events")
 def create_event(
         event_data: EventCreate,
@@ -65,6 +72,22 @@ def create_event(
     db.refresh(new_event)
     return {"status": "success", "id": new_event.id}
 
+@router.patch('/events/{event_id}')
+def update_event(
+        event_id: int,
+        update_data: EventUpdate,
+        current_user: User = AuthenticatedUser,
+        db: Session = Depends(get_db)
+):
+    event = db.query(Event).filter(Event.id == event_id, Event.user_id == current_user.id).first()
+    if not event:
+        raise HTTPException(status_code=404, detail="Событие не найдено")
+
+    for key, value in update_data.model_dump(exclude_unset=True).items():
+        setattr(event, key, value)
+
+    db.commit()
+    return {"status": "success"}
 
 @router.delete("/events/{event_id}")
 def delete_event(
@@ -80,6 +103,15 @@ def delete_event(
     db.delete(event)
     db.commit()
     return {"status": "success"}
+
+@router.get("/tasks", response_model=List[TaskResponse])
+def get_tasks(
+        current_user: User = AuthenticatedUser,
+        db: Session = Depends(get_db)
+):
+    return db.query(Task).filter(Task.user_id == current_user.id).all()
+
+
 
 @router.post("/tasks")
 def create_task(
@@ -97,3 +129,34 @@ def create_task(
     db.add(new_task)
     db.commit()
     return {"status": "success", "id": new_task.id}
+
+@router.patch('/tasks/{task_id}')
+def update_task(
+        task_id: int,
+        update_data: TaskUpdate,
+        current_user: User = AuthenticatedUser,
+        db: Session = Depends(get_db)
+):
+    task = db.query(Task).filter(Task.id == task_id, Task.user_id == current_user.id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Задача не найдена")
+
+    for key, value in update_data.model_dump(exclude_unset=True).items():
+        setattr(task, key, value)
+
+    db.commit()
+    return {"status": "success"}
+
+@router.delete("/tasks/{task_id}")
+def delete_task(
+        task_id: int,
+        current_user: User = AuthenticatedUser,
+        db: Session = Depends(get_db)
+):
+    task = db.query(Task).filter(Task.id == task_id, Task.user_id == current_user.id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Задача не найдена")
+
+    db.delete(task)
+    db.commit()
+    return {"status": "success"}

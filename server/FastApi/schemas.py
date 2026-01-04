@@ -12,11 +12,37 @@ class EventCreate(BaseModel):
     is_completed: int
     notify_at: datetime
 
+
 class LinkCode(BaseModel):
     code: str
+
 
 class TaskCreate(BaseModel):
     name: str
     description: Optional[str] = None
     category: str
     is_completed: int
+
+
+class EventResponse(EventCreate):
+    id: int
+    user_id: int
+
+    class Config:
+        from_attributes = True
+
+
+class EventUpdate(BaseModel):
+    is_completed: Optional[int] = None
+
+
+class TaskResponse(TaskCreate):
+    id: int
+    user_id: int
+
+    class Config:
+        from_attributes = True
+
+
+class TaskUpdate(BaseModel):
+    is_completed: Optional[int] = None

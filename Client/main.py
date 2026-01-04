@@ -2,7 +2,6 @@ import os
 import sys
 import datetime
 import sqlite3
-from multiprocessing.pool import worker
 
 import requests
 from datetime import datetime
@@ -37,7 +36,7 @@ TASK_CATEGORIES = [
 # ===================================================================
 
 class NetworkWorker(QObject):
-    finished = pyqtSignal(dict)  # Сигнал успеха с данными
+    finished = pyqtSignal(object)  # Сигнал успеха с данными
     error = pyqtSignal(str)  # Сигнал ошибки с текстом
 
     def __init__(self, url: str, method="POST", payload: dict = None, token: str = None):
@@ -53,7 +52,9 @@ class NetworkWorker(QObject):
                 resp = requests.post(self.url, json=self.payload, headers=self.headers)
             elif self.method == "DELETE":
                 resp = requests.delete(self.url, headers=self.headers)
-            else:
+            elif self.method == "PATCH":
+                resp = requests.patch(self.url, json=self.payload, headers=self.headers)
+            elif self.method == "GET":
                 resp = requests.get(self.url, headers=self.headers)
 
             resp.raise_for_status()
@@ -97,6 +98,7 @@ class SimplePlanner(QMainWindow):
         # --- Настройка системы ---
         self._init_db()
         self.load_data()
+        self.sync_all()
         self._setup_tree_widgets()
         app.setFont(self.global_font)
 
@@ -105,6 +107,10 @@ class SimplePlanner(QMainWindow):
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.check_alerts)
         self.timer.start(5000)
+
+        self.sync_timer = QTimer(self)
+        self.sync_timer.timeout.connect(self.sync_all)
+        self.sync_timer.start(300000)  # 5 минут
 
         # --- Подключение сигналов (Events) ---
         self.addEventBtn.clicked.connect(self.add_event)
@@ -122,7 +128,7 @@ class SimplePlanner(QMainWindow):
         self.fontBox.currentTextChanged.connect(self.change_font)
         self.colorButton.clicked.connect(self.change_color)
         self.reset_colorButton.clicked.connect(self.reset_color)
-
+        self.syncButton.clicked.connect(self.sync_all)
         self._setup_tray_icon()
 
     # -------------------------------------------------------------------
@@ -724,6 +730,10 @@ class SimplePlanner(QMainWindow):
         start_str = start_time.strftime("%H:%M")
         end_str = end_time.strftime("%H:%M")
 
+        query_sel = 'SELECT server_id FROM events WHERE name = ? AND start_date = ? AND end_date = ? AND time_start = ? AND time_end = ?'
+        res = self._execute_query(query_sel, (name, date_str, date_end_str, start_str, end_str), fetch_all=True)
+        server_id = res[0][0] if res and res[0] else None
+
         new_status = 0 if is_completed else 1
 
         query = '''
@@ -734,6 +744,19 @@ class SimplePlanner(QMainWindow):
         params = (new_status, name, date_str, date_end_str, start_str, end_str)
         self._execute_query(query, params, commit=True)
         self.load_data()
+        if server_id:
+            token = self._get_api_token()
+            if token:
+                payload = {'is_completed': new_status}
+                self.patch_worker = NetworkWorker(f"{SERVER_URL}/events/{server_id}", payload=payload, token=token,
+                                                  method='PATCH')
+                self.patch_thread = QThread()
+                self.patch_worker.moveToThread(self.patch_thread)
+                self.patch_thread.started.connect(self.patch_worker.run)
+                self.patch_worker.finished.connect(self.patch_thread.quit)
+                self.patch_worker.finished.connect(self.patch_worker.deleteLater)
+                self.patch_thread.finished.connect(self.patch_thread.deleteLater)
+                self.patch_thread.start()
 
     # -------------------------------------------------------------------
     # БЛОК 8: УПРАВЛЕНИЕ ЗАДАЧАМИ (Tasks)
@@ -750,7 +773,6 @@ class SimplePlanner(QMainWindow):
         desc = self.taskDes.text().strip()
         category = self.current_importance
         print(name, desc, category)
-
 
         query = 'INSERT INTO tasks (name, description, category, is_completed) VALUES (?, ?, ?, 0)'
         params = (name, desc, category)
@@ -788,9 +810,6 @@ class SimplePlanner(QMainWindow):
             query = "UPDATE tasks SET server_id = ? WHERE id = ?"
             self._execute_query(query, (server_id, local_id), commit=True)
             print(f"Синхронизировано: local={local_id}, server={server_id}")
-
-
-
 
     def update_task_list(self):
         search = self.searchTask.text().lower()
@@ -834,15 +853,26 @@ class SimplePlanner(QMainWindow):
         if item.parent():
             cat = item.parent().data(0, Qt.ItemDataRole.UserRole)
             t_data = item.data(0, Qt.ItemDataRole.UserRole)
+            server_id = t_data[3]
 
             query = '''DELETE FROM tasks WHERE name = ? AND description = ? AND category = ?'''
             params = (t_data[0], t_data[1], cat)
+            if server_id:
+                token = self._get_api_token()
+                if token:
+                    self.del_task_worker = NetworkWorker(f"{SERVER_URL}/tasks/{server_id}", method="DELETE",
+                                                         token=token)
+                    self.del_thread = QThread()
+                    self.del_task_worker.moveToThread(self.del_thread)
+                    self.del_thread.started.connect(self.del_task_worker.run)
+                    self.del_thread.start()
         else:
             cat = item.data(0, Qt.ItemDataRole.UserRole)
             query = '''DELETE FROM tasks WHERE category = ?'''
             params = (cat,)
 
         self._execute_query(query, params, commit=True)
+
         self.load_data()
 
     def _toggle_task_completion(self, item):
@@ -851,6 +881,9 @@ class SimplePlanner(QMainWindow):
         task = item.data(0, Qt.ItemDataRole.UserRole)
         name, desc, is_completed = task
 
+        query_sel = 'SELECT server_id FROM tasks WHERE name = ? AND description = ? AND category = ?'
+        res = self._execute_query(query_sel, (name, desc, cat), fetch_all=True)
+        server_id = res[0][0] if res else None
         # Инвертируем статус (1-0 или 0-1)
         new_status = 0 if is_completed else 1
 
@@ -862,7 +895,18 @@ class SimplePlanner(QMainWindow):
         params = (new_status, name, desc, cat)
 
         self._execute_query(query, params, commit=True)
-        self.load_data()  # Перезагружаем интерфейс
+        self.load_data()
+
+        if server_id:
+            token = self._get_api_token()
+            if token:
+                payload = {'is_completed': new_status}
+                self.patch_worker = NetworkWorker(f"{SERVER_URL}/tasks/{server_id}", payload=payload, token=token,
+                                                  method='PATCH')
+                self.patch_thread = QThread()
+                self.patch_worker.moveToThread(self.patch_thread)
+                self.patch_thread.started.connect(self.patch_worker.run)
+                self.patch_thread.start()
 
     # -------------------------------------------------------------------
     # БЛОК 9: НАСТРОЙКИ UI И ЦВЕТА
@@ -950,6 +994,85 @@ class SimplePlanner(QMainWindow):
         else:
             event.accept()
 
+    # -------------------------------------------------------------------
+    # БЛОК 10: ПОЛНАЯ СИНХРОНИЗАЦИЯ
+    # -------------------------------------------------------------------
+
+    def sync_all(self):
+        token = self._get_api_token()
+        if not token:
+            return
+
+        # Настройка потока событий
+        # 1. Загрузка событий с сервера
+        self.sync_events_worker = NetworkWorker(f"{SERVER_URL}/events", method="GET", token=token)
+        self.sync_thread_ev = QThread()
+        self.sync_events_worker.moveToThread(self.sync_thread_ev)
+        self.sync_events_worker.finished.connect(self._process_server_events)
+        self.sync_thread_ev.started.connect(self.sync_events_worker.run)
+        # Очистка потоков
+        self.sync_events_worker.finished.connect(self.sync_thread_ev.quit)
+        self.sync_events_worker.finished.connect(self.sync_events_worker.deleteLater)
+        self.sync_thread_ev.finished.connect(self.sync_thread_ev.deleteLater)
+        self.sync_thread_ev.start()
+        # 2. Загрузка задач с сервера (аналогично)
+        self.sync_tasks_worker = NetworkWorker(f"{SERVER_URL}/tasks", method="GET", token=token)
+        self.sync_thread_task = QThread()
+        self.sync_tasks_worker.moveToThread(self.sync_thread_task)
+        self.sync_tasks_worker.finished.connect(self._process_server_tasks)
+        self.sync_thread_task.started.connect(self.sync_tasks_worker.run)
+        # Очистка потоков
+        self.sync_tasks_worker.finished.connect(self.sync_thread_task.quit)
+        self.sync_tasks_worker.finished.connect(self.sync_tasks_worker.deleteLater)
+        self.sync_thread_task.finished.connect(self.sync_thread_task.deleteLater)
+        self.sync_thread_task.start()
+
+    def _process_server_events(self, events_data):
+        if not isinstance(events_data, list):
+            return
+        for ev in events_data:
+            server_id = ev['id']
+            check_query = "SELECT id FROM events WHERE server_id = ?"
+            res = self._execute_query(check_query, (server_id,), fetch_all=True)
+            if res:
+                query = '''
+                        UPDATE events SET
+                        name = ?, start_date = ?, end_date = ?, time_start = ?, time_end = ?, is_completed = ?
+                        WHERE server_id = ?
+                '''
+                t_start = ev['time_start'][:5]
+                t_end = ev['time_end'][:5]
+                params = (ev['event_name'], ev['start_date'], ev['end_date'], t_start, t_end, ev['is_completed'],
+                          server_id)
+                self._execute_query(query, params, commit=True)
+            else:
+                query = '''
+                    INSERT INTO events (name, start_date, end_date, time_start, time_end, is_completed, server_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                '''
+                t_start = ev['time_start'][:5]
+                t_end = ev['time_end'][:5]
+                params = (ev['event_name'], ev['start_date'], ev['end_date'], t_start, t_end, ev['is_completed'],
+                          server_id)
+                self._execute_query(query, params, commit=True)
+            self.load_data()
+
+    def _process_server_tasks(self, tasks_data):
+        if not isinstance(tasks_data, list):
+            return
+        for task in tasks_data:
+            server_id = task['id']
+            check_query = "SELECT id FROM tasks WHERE server_id = ?"
+            res = self._execute_query(check_query, (server_id,), fetch_all=True)
+            if res:
+                query = "UPDATE tasks SET name=?, description=?, category=?, is_completed=? WHERE server_id=?"
+                params = (task['name'], task['description'], task['category'], task['is_completed'], server_id)
+                self._execute_query(query, params, commit=True)
+            else:
+                query = "INSERT INTO tasks (name, description, category, is_completed, server_id) VALUES (?, ?, ?, ?, ?)"
+                params = (task['name'], task['description'], task['category'], task['is_completed'], server_id)
+                self._execute_query(query, params, commit=True)
+        self.load_data()
 
 
 if __name__ == '__main__':
