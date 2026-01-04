@@ -1,3 +1,4 @@
+import os
 import sys
 import datetime
 import sqlite3
@@ -17,7 +18,7 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QMessageBox, QTreeWidgetItem, QMenu, QTreeWidget, QInputDialog, QColorDialog,
     QSystemTrayIcon, QStyle
 )
-from PyQt6.QtGui import QFont, QTextCharFormat, QColor, QAction
+from PyQt6.QtGui import QFont, QTextCharFormat, QColor, QAction, QIcon
 
 # --- ГЛОБАЛЬНЫЕ КОНСТАНТЫ ---
 # SERVER_URL = "http://10.62.25.171:8000"
@@ -909,7 +910,15 @@ class SimplePlanner(QMainWindow):
 
     def _setup_tray_icon(self):
         self.tray_icon = QSystemTrayIcon(self)
-        self.tray_icon.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon))
+
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        icon_path = os.path.join(current_dir, 'calendar.ico')
+        if os.path.exists(icon_path):
+            self.tray_icon.setIcon(QIcon(icon_path))
+        else:
+            # Если ваша иконка не найдена, ставим запасную системную
+            self.tray_icon.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon))
+            print(f"Предупреждение: Иконка по пути {icon_path} не найдена")
 
         tray_menu = QMenu()
 

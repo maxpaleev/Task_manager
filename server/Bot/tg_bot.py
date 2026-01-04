@@ -2,12 +2,28 @@ import random
 import string
 
 from aiogram import Router, types
-from aiogram.filters import Command, CommandObject
+from aiogram.filters import Command, CommandObject, StateFilter
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from datetime import datetime
 from server.DB.database import SessionLocal
 from server.DB.models import User, Event, Task
 
 router = Router()
+
+
+class CreateEvent(StatesGroup):
+    name = State()
+    start = State()
+    end = State()
+    chose = State()
+
+
+class CreateTask(StatesGroup):
+    name = State()
+    description = State()
+    category = State()
+    check = State()
 
 
 def generate_code(length=6):
@@ -39,8 +55,6 @@ async def cmd_start(message: types.Message):
 
 @router.message(Command("events"))
 async def cmd_events(message: types.Message, command: CommandObject):
-
-
     with SessionLocal() as db:
         user = db.query(User).filter(User.telegram_id == str(message.from_user.id)).first()
         if not user:
@@ -64,8 +78,6 @@ async def cmd_events(message: types.Message, command: CommandObject):
 
         events = db.query(Event).filter(Event.user_id == user.id, Event.start_date == query_date).all()
 
-
-
         if not events:
             await message.answer(f"На {query_date} событий нет.")
             return
@@ -80,6 +92,85 @@ async def cmd_events(message: types.Message, command: CommandObject):
                     f"• {e.event_name} ({e.start_date.strftime('%d.%m.%Y')}{e.time_start.strftime(' %H:%M')} - {e.end_date.strftime('%d.%m.%Y')}{e.time_end.strftime(' %H:%M')})")
 
         await message.answer("\n".join(response), parse_mode="Markdown")
+
+
+@router.message(Command("create_event"))
+async def cmd_create_event(message: types.Message, state: FSMContext):
+    await message.answer("Введите название события")
+    await state.set_state(CreateEvent.name)
+
+
+@router.message(CreateEvent.name)
+async def create_event_name(message: types.Message, state: FSMContext):
+    await state.update_data(name=message.text)
+    await message.answer("Введите дату и время события в формате ДД.ММ.ГГГГ ЧЧ:ММ")
+    await state.set_state(CreateEvent.start)
+
+
+@router.message(CreateEvent.start)
+async def create_event_start(message: types.Message, state: FSMContext):
+    date, time = message.text.split()
+    try:
+        date_start = datetime.strptime(date, '%d.%m.%Y').date()
+        time_start = datetime.strptime(time, '%H:%M').time()
+    except ValueError:
+        await message.answer("Неверный формат даты или времени.")
+        return
+
+    await state.update_data(start_date=date_start, time_start=time_start)
+    await message.answer(
+        "Введите дату окончания события в формате ДД.ММ.ГГГГ ЧЧ:ММ, если событие длится один день, то введите только время")
+    await state.set_state(CreateEvent.end)
+
+
+@router.message(CreateEvent.end)
+async def create_event_end(message: types.Message, state: FSMContext):
+    date = message.text.split()
+    data = await state.get_data()
+    try:
+        if len(date) == 1:
+            date_end = data['start_date']
+            time_end = datetime.strptime(date[0], '%H:%M')
+        else:
+            date_end = datetime.strptime(date[0], '%d.%m.%Y')
+            time_end = datetime.strptime(date[1], '%H:%M')
+        await state.update_data(date_end=date_end, time_end=time_end)
+    except ValueError:
+        await message.answer("Неверный формат даты или времени.")
+        return
+    await message.answer(f"Название: {data['name']}\n"
+                         f"Дата начала: {data['start_date']} {data['time_start'].strftime('%H:%M')}\n"
+                         f"Дата окончания: {data['date_end']} {data['time_end'].strftime('%H:%M')}\n"
+                         f"Все верно? Да/Нет")
+    await state.set_state(CreateEvent.chose)
+
+
+@router.message(CreateEvent.chose)
+async def create_event_chose(message: types.Message, state: FSMContext):
+    if message.text.lower() == "да":
+        data = await state.get_data()
+        with SessionLocal() as db:
+            user = db.query(User).filter(User.telegram_id == str(message.from_user.id)).first()
+
+            if user:
+                new_event = Event(
+                    user_id=user.id,
+                    event_name=data['name'],
+                    start_date=data['start_date'],
+                    time_start=data['time_start'],
+                    end_date=data['date_end'],
+                    time_end=data['time_end'],
+                    notify_at=datetime.combine(data['start_date'], data['time_start']),
+                    is_completed=0
+                )
+                db.add(new_event)
+                db.commit()
+        await message.answer("Событие успешно создано.")
+        await state.clear()
+        return
+    elif message.text.lower() == "нет":
+        await message.answer("Введите название события")
+        await state.set_state(CreateEvent.name)
 
 
 @router.message(Command("tasks"))
@@ -108,3 +199,69 @@ async def cmd_tasks(message: types.Message):
                 else:
                     response.append(f"    ◦ {task[0]}")
         await message.answer("\n".join(response), parse_mode="Markdown")
+
+
+@router.message(Command("create_task"))
+async def cmd_create_task(message: types.Message, state: FSMContext):
+    await message.answer("Введите название задачи")
+    await state.set_state(CreateTask.name)
+
+
+@router.message(CreateTask.name)
+async def create_task_name(message: types.Message, state: FSMContext):
+    await message.answer("Введите описание задачи, если его нет напишите 'нет'")
+    await state.update_data(name=message.text)
+    await state.set_state(CreateTask.description)
+
+@router.message(CreateTask.description)
+async def create_task_description(message: types.Message, state: FSMContext):
+    if message.text.lower() == "нет":
+        await state.update_data(description="")
+    else:
+        await state.update_data(description=message.text)
+    await message.answer("Введите номер категории задачи\n"
+                         "1. Срочно и важно\n"
+                         "2. Важно, но не срочно\n"
+                         "3. Срочно, но не важно\n"
+                         "4. Не срочно и не важно")
+    await state.set_state(CreateTask.category)
+
+@router.message(CreateTask.category)
+async def create_task_category(message: types.Message, state: FSMContext):
+    category = {1: "Срочно и важно", 2: "Важно, но не срочно", 3: "Срочно, но не важно", 4: "Не срочно и не важно"}
+    try:
+        await state.update_data(category=category[int(message.text)])
+    except ValueError:
+        await message.answer("Неверный формат категории.")
+        return
+    data = await state.get_data()
+    await message.answer(f"Название: {data['name']}\n"
+                         f"Описание: {data['description']}\n"
+                         f"Категория: {data['category']}\n"
+                         f"Все верно? Да/Нет")
+    await state.set_state(CreateTask.check)
+
+
+@router.message(CreateTask.check)
+async def create_task_check(message: types.Message, state: FSMContext):
+    if message.text.lower() == "да":
+        data = await state.get_data()
+        with SessionLocal() as db:
+            user = db.query(User).filter(User.telegram_id == str(message.from_user.id)).first()
+            if user:
+                new_task = Task(
+                    user_id=user.id,
+                    name=data['name'],
+                    description=data['description'],
+                    category=data['category'],
+                    is_completed=0
+                )
+                db.add(new_task)
+                db.commit()
+        await message.answer("Задача успешно создана.")
+        await state.clear()
+        return
+    elif message.text.lower() == "нет":
+        await message.answer("Введите название задачи")
+        await state.set_state(CreateTask.name)
+

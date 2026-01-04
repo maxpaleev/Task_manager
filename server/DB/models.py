@@ -20,12 +20,12 @@ class Event(Base):
     user_id = Column(Integer, ForeignKey('users.id'))
     event_name = Column(String)
     start_date = Column(Date)
-    end_date = Column(Date)
     time_start = Column(Time)
+    end_date = Column(Date)
     time_end = Column(Time)
     notify_at = Column(DateTime)
     is_sent = Column(Boolean, default=0)
-    is_completed = Column(Integer, default=False)
+    is_completed = Column(Integer, default=0)
     owner = relationship("User", back_populates="events")
 
 class Task(Base):
