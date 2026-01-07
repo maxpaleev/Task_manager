@@ -63,38 +63,47 @@ async def cmd_events(message: types.Message, command: CommandObject):
     with SessionLocal() as db:
         user = db.query(User).filter(User.telegram_id == str(message.from_user.id)).first()
         if not user:
-            await message.answer("Вы не зарегистрированы.")
+            await message.answer("❌ Вы не зарегистрированы.")
             return
 
         if not command.args:
-            dates = db.query(Event.start_date).filter(Event.user_id == user.id).all()
+            dates = db.query(Event.start_date).distinct().filter(Event.user_id == user.id).all()
             if dates:
-                await message.answer(text="Чтобы вывести события на дату, введите команду \n/events (ДД.ММ.ГГГГ)\n"
-                                          "\nДоступные даты:\n" + "\n".join([str(date[0]) for date in dates]))
+                date_list = "\n".join([f"🔹 {date[0].strftime('%d.%m.%Y')}" for date in dates])
+                await message.answer(
+                    text="Чтобы вывести события на дату, введите команду:\n"
+                         "`/events ДД.ММ.ГГГГ` \n\n"
+                         f"📅 **Доступные даты:**\n{date_list}",
+                    parse_mode="Markdown"
+                )
             else:
-                await message.answer(text="Доступных дат нет.")
+                await message.answer(text="📭 Доступных дат нет.")
             return
 
         try:
             query_date = datetime.strptime(command.args, '%d.%m.%Y').date()
         except ValueError:
-            await message.answer("Неверный формат даты.")
+            await message.answer("⚠️ Неверный формат даты. Используйте ДД.ММ.ГГГГ")
             return
 
         events = db.query(Event).filter(Event.user_id == user.id, Event.start_date == query_date).all()
 
         if not events:
-            await message.answer(f"На {query_date} событий нет.")
+            await message.answer(f"На {query_date.strftime('%d.%m.%Y')} событий нет.")
             return
 
-        response = [f"📅 **{query_date}**"]
+        response = [f"📅 **События на {query_date.strftime('%d.%m.%Y')}**\n"]
         for e in events:
+            # Выбираем иконку в зависимости от статуса
+            status_icon = "✅" if e.is_completed else "⏳"
+
             if e.start_date == e.end_date:
                 time_range = f"{e.time_start.strftime('%H:%M')} - {e.time_end.strftime('%H:%M')}"
-                response.append(f"• {e.event_name} ({time_range})")
+                response.append(f"{status_icon} **{e.event_name}** ({time_range})")
             else:
-                response.append(
-                    f"• {e.event_name} ({e.start_date.strftime('%d.%m.%Y')}{e.time_start.strftime(' %H:%M')} - {e.end_date.strftime('%d.%m.%Y')}{e.time_end.strftime(' %H:%M')})")
+                start_dt = f"{e.start_date.strftime('%d.%m')} {e.time_start.strftime('%H:%M')}"
+                end_dt = f"{e.end_date.strftime('%d.%m')} {e.time_end.strftime('%H:%M')}"
+                response.append(f"{status_icon} **{e.event_name}**\n      └ {start_dt} — {end_dt}")
 
         await message.answer("\n".join(response), parse_mode="Markdown")
 
@@ -135,10 +144,13 @@ async def create_event_end(message: types.Message, state: FSMContext):
     try:
         if len(date) == 1:
             date_end = data['start_date']
-            time_end = datetime.strptime(date[0], '%H:%M')
+            time_end = datetime.strptime(date[0], '%H:%M').time()
         else:
-            date_end = datetime.strptime(date[0], '%d.%m.%Y')
-            time_end = datetime.strptime(date[1], '%H:%M')
+            date_end = datetime.strptime(date[0], '%d.%m.%Y').date()
+            time_end = datetime.strptime(date[1], '%H:%M').time()
+        if date_end < data['start_date'] or time_end < data['time_start']:
+            await message.answer("Дата окончания события не может быть раньше даты начала.")
+            return
         await state.update_data(date_end=date_end, time_end=time_end)
     except ValueError:
         await message.answer("Неверный формат даты или времени.")

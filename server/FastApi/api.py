@@ -50,6 +50,7 @@ def get_events(
 ):
     return db.query(Event).filter(Event.user_id == current_user.id).all()
 
+
 @router.post("/events")
 def create_event(
         event_data: EventCreate,
@@ -72,6 +73,7 @@ def create_event(
     db.refresh(new_event)
     return {"status": "success", "id": new_event.id}
 
+
 @router.patch('/events/{event_id}')
 def update_event(
         event_id: int,
@@ -89,20 +91,33 @@ def update_event(
     db.commit()
     return {"status": "success"}
 
+
 @router.delete("/events/{event_id}")
 def delete_event(
-        event_id: int,
+        event_id: str,
         current_user: User = AuthenticatedUser,
         db: Session = Depends(get_db)
 ):
     """Удаление события по ID сервера."""
-    event = db.query(Event).filter(Event.id == event_id, Event.user_id == current_user.id).first()
-    if not event:
-        raise HTTPException(status_code=404, detail="Событие не найдено")
+    if '_' in event_id:
+        ids = event_id.split('_')
+        for event_id in ids:
+            ev_id = int(event_id)
+            event = db.query(Event).filter(Event.id == ev_id, Event.user_id == current_user.id).first()
+            if not event:
+                raise HTTPException(status_code=404, detail="Событие не найдено")
+            db.delete(event)
+            db.commit()
+        return {"status": "success"}
+    else:
+        event = db.query(Event).filter(Event.id == event_id, Event.user_id == current_user.id).first()
+        if not event:
+            raise HTTPException(status_code=404, detail="Событие не найдено")
 
-    db.delete(event)
-    db.commit()
-    return {"status": "success"}
+        db.delete(event)
+        db.commit()
+        return {"status": "success"}
+
 
 @router.get("/tasks", response_model=List[TaskResponse])
 def get_tasks(
@@ -110,7 +125,6 @@ def get_tasks(
         db: Session = Depends(get_db)
 ):
     return db.query(Task).filter(Task.user_id == current_user.id).all()
-
 
 
 @router.post("/tasks")
@@ -130,6 +144,7 @@ def create_task(
     db.commit()
     return {"status": "success", "id": new_task.id}
 
+
 @router.patch('/tasks/{task_id}')
 def update_task(
         task_id: int,
@@ -147,16 +162,26 @@ def update_task(
     db.commit()
     return {"status": "success"}
 
+
 @router.delete("/tasks/{task_id}")
 def delete_task(
-        task_id: int,
+        task_id: str,
         current_user: User = AuthenticatedUser,
         db: Session = Depends(get_db)
 ):
-    task = db.query(Task).filter(Task.id == task_id, Task.user_id == current_user.id).first()
-    if not task:
-        raise HTTPException(status_code=404, detail="Задача не найдена")
+    cats = {'UaI': 'Срочно и важно', 'IbnN': 'Важно, но не срочно', 'UbnI': 'Срочно, но не важно',
+            'NUanI': 'Не срочно и не важно'}
+    if task_id.isdigit():
+        task_id = int(task_id)
+        task = db.query(Task).filter(Task.id == task_id, Task.user_id == current_user.id).first()
+        if not task:
+            raise HTTPException(status_code=404, detail="Задача не найдена")
 
-    db.delete(task)
-    db.commit()
-    return {"status": "success"}
+        db.delete(task)
+        db.commit()
+        return {"status": "success"}
+    else:
+        cat = cats[task_id]
+        db.query(Task).filter(Task.category == cat, Task.user_id == current_user.id).delete()
+        db.commit()
+        return {"status": "success"}

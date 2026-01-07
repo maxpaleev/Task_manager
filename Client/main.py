@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
     QSystemTrayIcon, QStyle
 )
 from PyQt6.QtGui import QFont, QTextCharFormat, QColor, QAction, QIcon
+from win32comext.mapi.mapiutil import prTable
 
 # --- ГЛОБАЛЬНЫЕ КОНСТАНТЫ ---
 # SERVER_URL = "http://10.62.25.171:8000"
@@ -676,48 +677,46 @@ class SimplePlanner(QMainWindow):
 
         else:
             # --- Удаление всех событий за день ---
-            QMessageBox.information(self, "Внимание", "При удалении целого дня, удаление происходит только локально.")
             date_key = item.data(0, Qt.ItemDataRole.UserRole)
             date_str = date_key.strftime("%Y-%m-%d")
 
-            # Получаем все события с этим start_date
-            query = "SELECT end_date FROM events WHERE start_date = ?"
-            result = self._execute_query(query, (date_str,), fetch_all=True)
+            days = 'SELECT DISTINCT end_date FROM events WHERE start_date = ?'
+            days = self._execute_query(days, (date_str,), fetch_all=True)
+            days = [datetime.strptime(i[0], "%Y-%m-%d").date() for i in days if i[0]]
 
-            if not result:
-                # Нет событий — удаляем и выходим
-                query_delete = "DELETE FROM events WHERE start_date = ?"
-                self._execute_query(query_delete, (date_str,), commit=True)
-                self.load_data()
-                return
+            if days:
+                for day in range(date_key.day, max(days).day + 1):
+                    date = QDate(date_key.year, date_key.month, day)
+                    fmt = QTextCharFormat()
+                    fmt.clearBackground()
+                    self.calendarWidget.setDateTextFormat(date, fmt)
 
-            # Парсим end_date и находим максимальную дату окончания
-            end_dates = []
-            for row in result:
-                end_date_str = row[0]  # например, '2025-02-03'
-                try:
-                    year, month, day = map(int, end_date_str.split('-'))
-                    end_dates.append(datetime.date(year, month, day))
-                except:
-                    continue  # пропускаем некорректные даты
+            server_id_to = 'SELECT server_id FROM events WHERE start_date = ?'
+            res = self._execute_query(server_id_to, (date_str,), fetch_all=True)
 
-            if not end_dates:
-                max_end_date = date_key
-            else:
-                max_end_date = max(end_dates)
-
-            # Очищаем фон для всех дней от start_date до max_end_date
-            current = date_key
-            while current <= max_end_date:
-                qdate = QDate(current.year, current.month, current.day)
-                fmt = QTextCharFormat()
-                fmt.clearBackground()
-                self.calendarWidget.setDateTextFormat(qdate, fmt)
-                current += datetime.timedelta(days=1)
-
-            # Удаляем события
             query_delete = "DELETE FROM events WHERE start_date = ?"
             self._execute_query(query_delete, (date_str,), commit=True)
+
+            token = self._get_api_token()
+            if token and res:
+                ids = [i[0] for i in res if i[0]]
+                ids = '_'.join(map(str, ids))
+                self.thread = QThread()
+                self.worker = NetworkWorker(
+                    url=f"{SERVER_URL}/events/{ids}",
+                    method="DELETE",
+                    token=token
+                )
+                self.worker.moveToThread(self.thread)
+                self.thread.started.connect(self.worker.run)
+                self.worker.finished.connect(self.thread.quit)
+                self.worker.finished.connect(self.worker.deleteLater)
+                self.thread.finished.connect(self.thread.deleteLater)
+                self.worker.error.connect(self.thread.quit)
+                self.worker.error.connect(self.worker.deleteLater)
+                self.thread.finished.connect(self.thread.deleteLater)
+                self.thread.start()
+
             self.load_data()
 
     def _toggle_event_completion(self, item):
@@ -865,15 +864,36 @@ class SimplePlanner(QMainWindow):
                     self.del_thread = QThread()
                     self.del_task_worker.moveToThread(self.del_thread)
                     self.del_thread.started.connect(self.del_task_worker.run)
+                    self.del_task_worker.finished.connect(self.del_thread.quit)
+                    self.del_task_worker.finished.connect(self.del_thread.deleteLater)
+                    self.del_thread.finished.connect(self.del_thread.deleteLater)
                     self.del_thread.start()
+            self.load_data()
         else:
+            cats = {'Срочно и важно': 'UaI', 'Важно, но не срочно': 'IbnN', 'Срочно, но не важно':'UbnI', 'Не срочно и не важно':'NUanI'}
             cat = item.data(0, Qt.ItemDataRole.UserRole)
             query = '''DELETE FROM tasks WHERE category = ?'''
             params = (cat,)
+            self._execute_query(query, params, commit=True)
+            self.load_data()
 
-        self._execute_query(query, params, commit=True)
+            token = self._get_api_token()
+            if token and cats[cat]:
+                self.thread = QThread()
+                self.worker = NetworkWorker(f"{SERVER_URL}/tasks/{cats[cat]}", method="DELETE",
+                                                     token=token)
+                self.worker.moveToThread(self.thread)
+                self.thread.started.connect(self.worker.run)
 
-        self.load_data()
+                # Безопасная очистка (как в предыдущих рекомендациях)
+                self.worker.finished.connect(self.thread.quit)
+                self.worker.finished.connect(self.worker.deleteLater)
+                self.thread.finished.connect(self.thread.deleteLater)
+                self.worker.error.connect(self.thread.quit)  # Очистка при ошибке
+                self.worker.error.connect(self.worker.deleteLater)
+                self.thread.finished.connect(self.thread.deleteLater)
+
+                self.thread.start()
 
     def _toggle_task_completion(self, item):
         """Переключает статус выполнения события"""
