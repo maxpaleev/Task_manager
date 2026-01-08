@@ -5,6 +5,7 @@ from aiogram import Router, types
 from aiogram.filters import Command, CommandObject, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
+from aiogram import F
 from datetime import datetime
 from server.DB.database import SessionLocal
 from server.DB.models import User, Event, Task
@@ -34,6 +35,21 @@ def generate_code(length=6):
 async def cmd_start(message: types.Message):
     telegram_id = str(message.from_user.id)
     link_code = generate_code()
+    kb = [
+        [
+            types.KeyboardButton(text="События"),
+            types.KeyboardButton(text="Задачи")
+        ],
+        [
+            types.KeyboardButton(text="Создать событие"),
+            types.KeyboardButton(text="Создать задачу")
+        ]
+    ]
+    keyboard = types.ReplyKeyboardMarkup(
+        keyboard=kb,
+        resize_keyboard=True,
+        input_field_placeholder="Выберите способ подачи"
+    )
 
     with SessionLocal() as db:
         user = db.query(User).filter(User.telegram_id == telegram_id).first()
@@ -50,7 +66,7 @@ async def cmd_start(message: types.Message):
             "Введите этот код в приложении на ПК:\n\n"
             f"**`{link_code}`**"
         )
-        await message.answer(text, parse_mode="Markdown")
+        await message.answer(text, parse_mode="Markdown", reply_markup=keyboard)
 
 
 # -------------------------------------------------------------------
@@ -58,28 +74,33 @@ async def cmd_start(message: types.Message):
 # -------------------------------------------------------------------
 
 
-@router.message(Command("events"))
-async def cmd_events(message: types.Message, command: CommandObject):
+@router.message(F.text.lower() == "события")
+async def cmd_events_dates(message: types.Message):
     with SessionLocal() as db:
         user = db.query(User).filter(User.telegram_id == str(message.from_user.id)).first()
         if not user:
             await message.answer("❌ Вы не зарегистрированы.")
             return
 
-        if not command.args:
-            dates = db.query(Event.start_date).distinct().filter(Event.user_id == user.id).all()
-            if dates:
-                date_list = "\n".join([f"🔹 {date[0].strftime('%d.%m.%Y')}" for date in dates])
-                await message.answer(
-                    text="Чтобы вывести события на дату, введите команду:\n"
-                         "`/events ДД.ММ.ГГГГ` \n\n"
-                         f"📅 **Доступные даты:**\n{date_list}",
-                    parse_mode="Markdown"
-                )
-            else:
-                await message.answer(text="📭 Доступных дат нет.")
-            return
 
+        dates = db.query(Event.start_date).distinct().filter(Event.user_id == user.id).all()
+        if dates:
+            date_list = "\n".join([f"🔹 {date[0].strftime('%d.%m.%Y')}" for date in dates])
+            await message.answer(
+                text="Чтобы вывести события на дату, введите команду:\n"
+                     "`/events ДД.ММ.ГГГГ` \n\n"
+                     f"📅 **Доступные даты:**\n{date_list}",
+                parse_mode="Markdown"
+            )
+        else:
+            await message.answer(text="📭 Доступных дат нет.")
+        return
+
+
+@router.message(Command("events"))
+async def cmd_events(message: types.Message, command: CommandObject):
+    with SessionLocal() as db:
+        user = db.query(User).filter(User.telegram_id == str(message.from_user.id)).first()
         try:
             query_date = datetime.strptime(command.args, '%d.%m.%Y').date()
         except ValueError:
@@ -108,7 +129,7 @@ async def cmd_events(message: types.Message, command: CommandObject):
         await message.answer("\n".join(response), parse_mode="Markdown")
 
 
-@router.message(Command("create_event"))
+@router.message(F.text.lower() == "создать событие")
 async def cmd_create_event(message: types.Message, state: FSMContext):
     await message.answer("Введите название события")
     await state.set_state(CreateEvent.name)
@@ -196,7 +217,7 @@ async def create_event_chose(message: types.Message, state: FSMContext):
 # -------------------------------------------------------------------
 
 
-@router.message(Command("tasks"))
+@router.message(F.text.lower() == "задачи")
 async def cmd_tasks(message: types.Message):
     with SessionLocal() as db:
         user = db.query(User).filter(User.telegram_id == str(message.from_user.id)).first()
@@ -211,20 +232,26 @@ async def cmd_tasks(message: types.Message):
         category = {}
         for task in tasks:
             if task.category in category:
-                category[task.category].append((task.name, task.description))
+                category[task.category].append((task.name, task.description, task.is_completed))
             else:
-                category[task.category] = [(task.name, task.description)]
+                category[task.category] = [(task.name, task.description, task.is_completed)]
         for cat in category:
             response.append(f"• {cat}")
             for task in category[cat]:
-                if task[1]:
-                    response.append(f"    ◦ {task[0]} ({task[1]})")
+                if len(task) == 3:
+                    if task[2]:
+                        response.append(f"    ◦ {task[0]} ({task[1]}) ✅")
+                    else:
+                        response.append(f"    ◦ {task[0]} ({task[1]}) ⏳")
                 else:
-                    response.append(f"    ◦ {task[0]}")
+                    if task[1]:
+                        response.append(f"    ◦ {task[0]} ✅")
+                    else:
+                        response.append(f"    ◦ {task[0]} ⏳")
         await message.answer("\n".join(response), parse_mode="Markdown")
 
 
-@router.message(Command("create_task"))
+@router.message(F.text.lower() == "создать задачу")
 async def cmd_create_task(message: types.Message, state: FSMContext):
     await message.answer("Введите название задачи")
     await state.set_state(CreateTask.name)
