@@ -92,6 +92,7 @@ class SimplePlanner(QMainWindow):
         self.tasks: Dict[str, List[Tuple[str, str, int]]] = {cat: [] for cat in TASK_CATEGORIES}
         self.tg_enabled = False
         self.color = QColor('#FF7F50')
+        self.past_color = QColor('#FF9F7C')
         self.current_date = 1
         self.current_importance = TASK_CATEGORIES[0]
         self.global_font = QFont('Segoe UI', 8)
@@ -464,7 +465,7 @@ class SimplePlanner(QMainWindow):
         start_py = self.timeStart.time().toPyTime()
         end_py = self.timeEnd.time().toPyTime()
 
-        if end_py < start_py and date_start <= date_end:
+        if datetime.combine(date_start, start_py) > datetime.combine(date_end, end_py):
             QMessageBox.warning(self, "Ошибка", "Время окончания не может быть раньше начала")
             return
 
@@ -541,6 +542,59 @@ class SimplePlanner(QMainWindow):
         search = self.searchEvent.text().lower()
         self.eventList.clear()
 
+        # --- 1. ОЧИСТКА И РАСЧЕТ ЦВЕТОВ КАЛЕНДАРЯ ---
+        # Инициализируем множество покрашенных дат, если его нет (для очистки при следующем обновлении)
+        if not hasattr(self, 'painted_dates'):
+            self.painted_dates = set()
+
+        # Сбрасываем форматирование для ранее покрашенных дат
+        clean_fmt = QTextCharFormat()
+        for d in self.painted_dates:
+            self.calendarWidget.setDateTextFormat(d, clean_fmt)
+        self.painted_dates.clear()
+
+        # Словарь статусов дней: 2 - Активно (нужен цвет), 1 - Выполнено (без цвета или серый)
+        day_status_map: Dict[QDate, int] = {}
+
+        # Проходим по всем событиям, чтобы определить статус каждого дня
+        for date_key, events_list in self.events.items():
+            for ev in events_list:
+                _, date_end_obj, _, _, is_completed = ev
+                if is_completed:
+                    continue
+
+                # Правильный цикл по датам (с учетом перехода месяцев)
+                d_start = QDate(date_key.year, date_key.month, date_key.day)
+                d_end = QDate(date_end_obj.year, date_end_obj.month, date_end_obj.day)
+
+                curr_date = d_start
+                while curr_date <= d_end:
+                    # Приоритет: Активное событие (2) важнее выполненного (1)
+                    is_boundary = (curr_date == d_start or curr_date == d_end)
+                    new_status = 2 if is_boundary else 1
+
+                    current_status = day_status_map.get(curr_date, 0)
+                    if new_status > current_status:
+                        day_status_map[curr_date] = new_status
+
+                    curr_date = curr_date.addDays(1)
+
+        # Применяем цвета только для Активных дней (status == 2)
+        fmt_active = QTextCharFormat()
+        fmt_active.setBackground(self.color)
+
+        fmt_intermediate = QTextCharFormat()
+        # Делаем промежуточный цвет бледнее (добавляем прозрачность или осветляем)  # Значение от 0 до 255 (100 — полупрозрачный)
+        fmt_intermediate.setBackground(QColor('#FF9F7C'))
+
+        for q_date, status in day_status_map.items():
+            if status == 2:
+                self.calendarWidget.setDateTextFormat(q_date, fmt_active)
+            elif status == 1:
+                self.calendarWidget.setDateTextFormat(q_date, fmt_intermediate)
+            self.painted_dates.add(q_date)
+
+        # --- 2. ЗАПОЛНЕНИЕ СПИСКА (TREE WIDGET) ---
         items = []
         for date_key in sorted(self.events.keys()):
             events_list = self.events[date_key]
@@ -552,47 +606,26 @@ class SimplePlanner(QMainWindow):
 
             if matching:
                 root_item = QTreeWidgetItem([date_key.strftime("%d.%m.%Y")])
-
-                date = QDate(date_key.year, date_key.month, date_key.day)
-                fmt = QTextCharFormat()
-                fmt.setBackground(self.color)
-
-                self.calendarWidget.setDateTextFormat(date, fmt)
-                # Устанавливаем формат даты в календаре idget
                 root_item.setData(0, Qt.ItemDataRole.UserRole, date_key)
 
                 for ev in sorted(matching, key=lambda x: (x[4], x[2])):
                     name, date_end, start, end, is_completed = ev
-                    if date_end == date:
+
+                    # Формирование строки времени
+                    if date_key == date_end:
                         time_str = f"{start.strftime('%H:%M')} - {end.strftime('%H:%M')}"
                     else:
                         time_str = f"{datetime.combine(date_key, start).strftime('%d.%m.%Y %H:%M')} - {datetime.combine(date_end, end).strftime('%d.%m.%Y %H:%M')}"
-                        for i in range(date_key.day + 1, date_end.day):
-                            _date = QDate(date_key.year, date_key.month, i)
-                            fmt = QTextCharFormat()
-                            fmt.setBackground(QColor('#FF9F7C'))
-                            self.calendarWidget.setDateTextFormat(_date, fmt)
-                            fmt.setBackground(self.color)
-                            self.calendarWidget.setDateTextFormat(date, fmt)
-                            self.calendarWidget.setDateTextFormat(date_end, fmt)
+
                     child = QTreeWidgetItem([name, time_str])
                     child.setData(0, Qt.ItemDataRole.UserRole, ev)
+
                     if is_completed:
-                        if date_end == date:
-                            fmt.clearBackground()
-                            self.calendarWidget.setDateTextFormat(date, fmt)
-                        else:
-                            for i in range(date_key.day, date_end.day + 1):
-                                date = QDate(date_key.year, date_key.month, i)
-                                fmt.clearBackground()
-                                self.calendarWidget.setDateTextFormat(date, fmt)
-                        # Шрифт зачеркнутый
                         font = child.font(0)
                         font.setStrikeOut(True)
                         child.setFont(0, font)
                         child.setFont(1, font)
 
-                        # Цвет серый
                         gray_brush = QColor('gray')
                         child.setForeground(0, gray_brush)
                         child.setForeground(1, gray_brush)
@@ -607,8 +640,6 @@ class SimplePlanner(QMainWindow):
     def _delete_event_logic(self, item):
         if item.parent():
             # --- Удаление конкретного события ---
-
-            # Получаем данные события
             date_key = item.parent().data(0, Qt.ItemDataRole.UserRole)
             ev_data = item.data(0, Qt.ItemDataRole.UserRole)
             name, date_end, start_time, end_time, _ = ev_data
@@ -618,17 +649,14 @@ class SimplePlanner(QMainWindow):
             start_str = start_time.strftime("%H:%M")
             end_str = end_time.strftime("%H:%M")
 
-            # 1. Получаем server_id из локальной БД (ДО удаления!)
+            # 1. Получаем server_id
             query_select = '''
                 SELECT server_id FROM events 
                 WHERE name = ? AND start_date = ? AND end_date = ? AND time_start = ? AND time_end = ?
             '''
             params_select = (name, date_str, date_end_str, start_str, end_str)
-
             result = self._execute_query(query_select, params_select, fetch_all=True)
-
-            # Извлекаем server_id
-            server_id_to_delete = result[0][0] if result and result[0] and result[0][0] else None
+            server_id_to_delete = result[0][0] if result and result[0] else None
 
             # 2. Локальное удаление
             query_delete = '''
@@ -636,74 +664,13 @@ class SimplePlanner(QMainWindow):
                 WHERE name = ? AND start_date = ? AND end_date = ? AND time_start = ? AND time_end = ?
             '''
             self._execute_query(query_delete, params_select, commit=True)
-            if date_key == date_end:
-                date = QDate(date_key.year, date_key.month, date_key.day)
-                fmt = QTextCharFormat()
-                fmt.clearBackground()
-                self.calendarWidget.setDateTextFormat(date, fmt)
-            else:
-                for i in range(date_key.day, date_end.day + 1):
-                    date = QDate(date_key.year, date_key.month, i)
-                    fmt = QTextCharFormat()
-                    fmt.clearBackground()
-                    self.calendarWidget.setDateTextFormat(date, fmt)
-            self.load_data()  # Обновляем UI сразу же, чтобы удаление казалось мгновенным
 
-            # 3. Если есть server_id и токен, запускаем синхронизацию на сервере
+            # 3. Синхронизация с сервером
             token = self._get_api_token()
             if server_id_to_delete and token:
-                # Блокируем кнопку, чтобы избежать повторного нажатия (опционально)
-                # ВАЖНО: Создаем НОВЫЕ worker и thread, как в вашем стиле,
-                # но для безопасности используем локальные переменные
                 self.thread = QThread()
                 self.worker = NetworkWorker(
                     url=f"{SERVER_URL}/events/{server_id_to_delete}",
-                    method="DELETE",  # Используем метод DELETE
-                    token=token
-                )
-
-                self.worker.moveToThread(self.thread)
-                self.thread.started.connect(self.worker.run)
-
-                # Безопасная очистка (как в предыдущих рекомендациях)
-                self.worker.finished.connect(self.thread.quit)
-                self.worker.finished.connect(self.worker.deleteLater)
-                self.thread.finished.connect(self.thread.deleteLater)
-                self.worker.error.connect(self.thread.quit)  # Очистка при ошибке
-                self.worker.error.connect(self.worker.deleteLater)
-                self.thread.finished.connect(self.thread.deleteLater)
-
-                self.thread.start()
-
-        else:
-            # --- Удаление всех событий за день ---
-            date_key = item.data(0, Qt.ItemDataRole.UserRole)
-            date_str = date_key.strftime("%Y-%m-%d")
-
-            days = 'SELECT DISTINCT end_date FROM events WHERE start_date = ?'
-            days = self._execute_query(days, (date_str,), fetch_all=True)
-            days = [datetime.strptime(i[0], "%Y-%m-%d").date() for i in days if i[0]]
-
-            if days:
-                for day in range(date_key.day, max(days).day + 1):
-                    date = QDate(date_key.year, date_key.month, day)
-                    fmt = QTextCharFormat()
-                    fmt.clearBackground()
-                    self.calendarWidget.setDateTextFormat(date, fmt)
-
-            server_id_to = 'SELECT server_id FROM events WHERE start_date = ?'
-            res = self._execute_query(server_id_to, (date_str,), fetch_all=True)
-
-            query_delete = "DELETE FROM events WHERE start_date = ?"
-            self._execute_query(query_delete, (date_str,), commit=True)
-
-            token = self._get_api_token()
-            if token and res:
-                ids = [i[0] for i in res if i[0]]
-                ids = '_'.join(map(str, ids))
-                self.thread = QThread()
-                self.worker = NetworkWorker(
-                    url=f"{SERVER_URL}/events/{ids}",
                     method="DELETE",
                     token=token
                 )
@@ -712,11 +679,43 @@ class SimplePlanner(QMainWindow):
                 self.worker.finished.connect(self.thread.quit)
                 self.worker.finished.connect(self.worker.deleteLater)
                 self.thread.finished.connect(self.thread.deleteLater)
-                self.worker.error.connect(self.thread.quit)
-                self.worker.error.connect(self.worker.deleteLater)
-                self.thread.finished.connect(self.thread.deleteLater)
                 self.thread.start()
 
+            # Обновляем UI (автоматически перерисует календарь)
+            self.load_data()
+
+        else:
+            # --- Удаление всех событий за день ---
+            date_key = item.data(0, Qt.ItemDataRole.UserRole)
+            date_str = date_key.strftime("%Y-%m-%d")
+
+            # Получаем ID для удаления с сервера
+            server_id_to = 'SELECT server_id FROM events WHERE start_date = ?'
+            res = self._execute_query(server_id_to, (date_str,), fetch_all=True)
+
+            # Локальное удаление
+            query_delete = "DELETE FROM events WHERE start_date = ?"
+            self._execute_query(query_delete, (date_str,), commit=True)
+
+            token = self._get_api_token()
+            if token and res:
+                ids = [i[0] for i in res if i[0]]
+                if ids:
+                    ids_str = '_'.join(map(str, ids))
+                    self.thread = QThread()
+                    self.worker = NetworkWorker(
+                        url=f"{SERVER_URL}/events/{ids_str}",
+                        method="DELETE",
+                        token=token
+                    )
+                    self.worker.moveToThread(self.thread)
+                    self.thread.started.connect(self.worker.run)
+                    self.worker.finished.connect(self.thread.quit)
+                    self.worker.finished.connect(self.worker.deleteLater)
+                    self.thread.finished.connect(self.thread.deleteLater)
+                    self.thread.start()
+
+            # Обновляем UI
             self.load_data()
 
     def _toggle_event_completion(self, item):
@@ -870,7 +869,8 @@ class SimplePlanner(QMainWindow):
                     self.del_thread.start()
             self.load_data()
         else:
-            cats = {'Срочно и важно': 'UaI', 'Важно, но не срочно': 'IbnN', 'Срочно, но не важно':'UbnI', 'Не срочно и не важно':'NUanI'}
+            cats = {'Срочно и важно': 'UaI', 'Важно, но не срочно': 'IbnN', 'Срочно, но не важно': 'UbnI',
+                    'Не срочно и не важно': 'NUanI'}
             cat = item.data(0, Qt.ItemDataRole.UserRole)
             query = '''DELETE FROM tasks WHERE category = ?'''
             params = (cat,)
@@ -881,7 +881,7 @@ class SimplePlanner(QMainWindow):
             if token and cats[cat]:
                 self.thread = QThread()
                 self.worker = NetworkWorker(f"{SERVER_URL}/tasks/{cats[cat]}", method="DELETE",
-                                                     token=token)
+                                            token=token)
                 self.worker.moveToThread(self.thread)
                 self.thread.started.connect(self.worker.run)
 

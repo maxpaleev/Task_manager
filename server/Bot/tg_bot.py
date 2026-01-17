@@ -73,28 +73,157 @@ async def cmd_start(message: types.Message):
 # Логика событий
 # -------------------------------------------------------------------
 
+DATES_PER_PAGE = 2
+
+
+async def get_dates_keyboard(user_id: int, page: int = 0):
+    with SessionLocal() as db:
+        # Получаем уникальные даты, отсортированные по возрастанию
+        dates_query = db.query(Event.start_date).distinct().filter(
+            Event.user_id == user_id
+        ).order_by(Event.start_date.asc()).all()
+
+        dates_list = [d[0].strftime('%d.%m.%Y') for d in dates_query]
+
+        if not dates_list:
+            return None, "📭 Доступных дат нет."
+
+        # Вычисляем границы для текущей страницы
+        start_idx = page * DATES_PER_PAGE
+        end_idx = start_idx + DATES_PER_PAGE
+        current_page_dates = dates_list[start_idx:end_idx]
+
+        # Создаем кнопки с датами (по 2 в ряд для красоты)
+        buttons = []
+        row = []
+        for date_str in current_page_dates:
+            row.append(types.InlineKeyboardButton(text=date_str, callback_data=f'date_{date_str}'))
+            if len(row) == 2:
+                buttons.append(row)
+                row = []
+        if row: buttons.append(row)
+
+        # Кнопки навигации
+        nav_buttons = []
+        if page > 0:
+            nav_buttons.append(types.InlineKeyboardButton(text='⬅️ Пред.', callback_data=f'page_{page - 1}'))
+        if end_idx < len(dates_list):
+            nav_buttons.append(types.InlineKeyboardButton(text='След. ➡️', callback_data=f'page_{page + 1}'))
+
+        if nav_buttons:
+            buttons.append(nav_buttons)
+
+        return types.InlineKeyboardMarkup(inline_keyboard=buttons), "📅 Выберите дату для просмотра событий:"
+
 
 @router.message(F.text.lower() == "события")
-async def cmd_events_dates(message: types.Message):
+async def cmd_events_list(message: types.Message):
     with SessionLocal() as db:
         user = db.query(User).filter(User.telegram_id == str(message.from_user.id)).first()
         if not user:
             await message.answer("❌ Вы не зарегистрированы.")
             return
 
+        kb, text = await get_dates_keyboard(user.id, page=0)
+        await message.answer(text, reply_markup=kb)
 
-        dates = db.query(Event.start_date).distinct().filter(Event.user_id == user.id).all()
-        if dates:
-            date_list = "\n".join([f"🔹 {date[0].strftime('%d.%m.%Y')}" for date in dates])
-            await message.answer(
-                text="Чтобы вывести события на дату, введите команду:\n"
-                     "`/events ДД.ММ.ГГГГ` \n\n"
-                     f"📅 **Доступные даты:**\n{date_list}",
-                parse_mode="Markdown"
-            )
+
+@router.callback_query(F.data.startswith('date_'))
+async def cmd_events_dates(callback: types.CallbackQuery):
+    date = callback.data.split('_')[1]
+    with SessionLocal() as db:
+        user = db.query(User).filter(User.telegram_id == str(callback.from_user.id)).first()
+        try:
+            query_date = datetime.strptime(date, '%d.%m.%Y').date()
+        except ValueError:
+            await callback.message.answer("⚠️ Неверный формат даты. Используйте ДД.ММ.ГГГГ")
+            return
+
+        events = db.query(Event).filter(Event.user_id == user.id, Event.start_date == query_date).all()
+
+        if not events:
+            await callback.message.answer(f"На {query_date.strftime('%d.%m.%Y')} событий нет.")
+            return
+
+        response = [f"📅 **События на {query_date.strftime('%d.%m.%Y')}**\n"]
+        for e in events:
+            # Выбираем иконку в зависимости от статуса
+            status_icon = "✅" if e.is_completed else "⏳"
+
+            if e.start_date == e.end_date:
+                time_range = f"{e.time_start.strftime('%H:%M')} - {e.time_end.strftime('%H:%M')}"
+                response.append(f"{status_icon} **{e.event_name}** ({time_range})")
+            else:
+                start_dt = f"{e.start_date.strftime('%d.%m')} {e.time_start.strftime('%H:%M')}"
+                end_dt = f"{e.end_date.strftime('%d.%m')} {e.time_end.strftime('%H:%M')}"
+                response.append(f"{status_icon} **{e.event_name}**\n      └ {start_dt} — {end_dt}")
+
+        buttons = []
+        for e in events:
+            if e.is_completed:
+                buttons.append(
+                    types.InlineKeyboardButton(text=f'❌ {e.event_name}', callback_data=f'change_{e.id}_0_{date}'))
+            else:
+                buttons.append(
+                    types.InlineKeyboardButton(text=f'✅ {e.event_name}', callback_data=f'change_{e.id}_1_{date}'))
+            kb = types.InlineKeyboardMarkup(inline_keyboard=[buttons])
+        await callback.message.answer("\n".join(response), parse_mode="Markdown", reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith('change_'))
+async def cmd_events_change(callback: types.CallbackQuery):
+    ev_id = int(callback.data.split('_')[1])
+    ev_status = int(callback.data.split('_')[2])
+    date = callback.data.split('_')[3]
+    query_date = datetime.strptime(date, '%d.%m.%Y').date()
+    with SessionLocal() as db:
+        user = db.query(User).filter(User.telegram_id == str(callback.from_user.id)).first()
+        if ev_status == 1:
+            db.query(Event).filter(Event.id == ev_id).update({Event.is_completed: 1})
+            db.commit()
+            await callback.answer("Статус события изменен на ❌", show_alert=True)
         else:
-            await message.answer(text="📭 Доступных дат нет.")
-        return
+            db.query(Event).filter(Event.id == ev_id).update({Event.is_completed: 0})
+            db.commit()
+            await callback.answer("Статус события изменен на ✅", show_alert=True)
+        events = db.query(Event).filter(Event.user_id == user.id, Event.start_date == date).all()
+    response = [f"📅 **События на {query_date.strftime('%d.%m.%Y')}**\n"]
+    for e in events:
+        # Выбираем иконку в зависимости от статуса
+        status_icon = "✅" if e.is_completed else "⏳"
+
+        if e.start_date == e.end_date:
+            time_range = f"{e.time_start.strftime('%H:%M')} - {e.time_end.strftime('%H:%M')}"
+            response.append(f"{status_icon} **{e.event_name}** ({time_range})")
+        else:
+            start_dt = f"{e.start_date.strftime('%d.%m')} {e.time_start.strftime('%H:%M')}"
+            end_dt = f"{e.end_date.strftime('%d.%m')} {e.time_end.strftime('%H:%M')}"
+            response.append(f"{status_icon} **{e.event_name}**\n      └ {start_dt} — {end_dt}")
+
+    buttons = []
+    kb = None
+    for e in events:
+        if e.is_completed:
+            buttons.append(
+                types.InlineKeyboardButton(text=f'❌ {e.event_name}', callback_data=f'change_{e.id}_0_{date}'))
+        else:
+            buttons.append(
+                types.InlineKeyboardButton(text=f'✅ {e.event_name}', callback_data=f'change_{e.id}_1_{date}'))
+        kb = types.InlineKeyboardMarkup(inline_keyboard=[buttons])
+    await callback.message.edit_text("\n".join(response), parse_mode="Markdown", reply_markup=kb)
+
+@router.callback_query(F.data.startswith('page_'))
+async def process_page_callback(callback: types.CallbackQuery):
+    page = int(callback.data.split('_')[1])
+    with SessionLocal() as db:
+        user = db.query(User).filter(User.telegram_id == str(callback.from_user.id)).first()
+        kb, text = await get_dates_keyboard(user.id, page=page)
+
+        # Редактируем сообщение только если клавиатура существует
+        if kb:
+            await callback.message.edit_reply_markup(reply_markup=kb)
+        await callback.answer()
+
 
 
 @router.message(Command("events"))
