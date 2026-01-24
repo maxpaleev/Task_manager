@@ -1,0 +1,121 @@
+import logging
+import asyncio
+from datetime import datetime, timedelta
+from contextlib import asynccontextmanager
+
+import uvicorn
+from fastapi import FastAPI
+from aiogram import Bot, Dispatcher
+from server.Bot.tg_bot import router as bot_router
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+from server.DB.database import engine, Base, SessionLocal
+from server.DB.models import User, Event
+from server.FastApi.api import router as api_router
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+BOT_TOK = '5921569584:AAEKfppjMRD1XEa80skgufMaZKEwS9iQKRU'
+INTERVAL = 60
+
+app = FastAPI()
+bot = Bot(token=BOT_TOK)
+dp = Dispatcher()
+scheduler = AsyncIOScheduler()
+
+
+async def check_events():
+    # Используем контекстный менеджер для сессии (гарантирует закрытие)
+    with SessionLocal() as db:
+        try:
+            now_check = datetime.now()
+            if now_check.hour == 9 and now_check.minute == 0:
+                events_to_send = db.query(Event).filter(
+                    Event.start_date == now_check.date(),
+                    # Event.is_sent == False
+                ).all()
+
+                if not events_to_send:
+                    return
+
+                event = events_to_send[0]
+                user = db.query(User).filter(User.id == event.user_id).first()
+                if user and user.telegram_id:
+                    try:
+                        await bot.send_message(
+                            chat_id=user.telegram_id,
+                            text=f"⏰ Напоминания на день:\n {'\n'.join([e.event_name for e in events_to_send])}"
+                        )
+                    except Exception as e:
+                        logger.error(f"TG Error: {e}")
+
+            events_to_send_per_hour = db.query(Event).filter(
+                Event.time_start - timedelta(hours=1) == now_check.time().replace(second=0).replace(microsecond=0),
+                Event.start_date == now_check.date(),
+                # Event.is_sent == False
+            ).all()
+
+            events_to_send_now = db.query(Event).filter(
+                Event.time_start == now_check.time().replace(second=0).replace(microsecond=0),
+                Event.start_date == now_check.date(),
+                # Event.is_sent == False
+            ).all()
+
+            events_to_send = events_to_send_per_hour + events_to_send_now
+
+            if not events_to_send:
+                return
+
+            for event in events_to_send:
+                # Оптимизация: можно использовать join, но для простоты оставим так
+                user = db.query(User).filter(User.id == event.user_id).first()
+
+                if user and user.telegram_id:
+                    try:
+                        await bot.send_message(
+                            chat_id=user.telegram_id,
+                            text=f"⏰ Напоминание: {event.event_name}"
+                        )
+                        event.is_sent = True
+                    except Exception as e:
+                        logger.error(f"TG Error: {e}")
+                # else:
+                    # event.is_sent = True
+            db.commit()
+        except Exception as e:
+            logger.error(f"Scheduler error: {e}")
+            db.rollback()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # --- Startup ---
+    logger.info('Starting up...')
+    Base.metadata.create_all(bind=engine)
+
+    scheduler.add_job(check_events, 'interval', seconds=60, id='check_events')
+    scheduler.start()
+
+    dp.include_router(bot_router)
+    polling_task = asyncio.create_task(dp.start_polling(bot))
+
+    yield  # Приложение работает здесь
+
+    # --- Shutdown ---
+    logger.info("Shutting down...")
+    scheduler.shutdown()
+    await bot.session.close()
+    polling_task.cancel()  # Останавливаем поллинг
+    try:
+        await polling_task
+    except asyncio.CancelledError:
+        pass
+
+
+# Инициализация приложения с lifespan
+app = FastAPI(lifespan=lifespan)
+app.include_router(api_router)
+
+if __name__ == '__main__':
+    uvicorn.run('main_server:app', host="10.62.25.171", port=8000)

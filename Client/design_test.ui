@@ -46,6 +46,13 @@
              </widget>
             </item>
             <item>
+             <widget class="QDateEdit" name="dateStart">
+              <property name="calendarPopup">
+               <bool>false</bool>
+              </property>
+             </widget>
+            </item>
+            <item>
              <widget class="QTimeEdit" name="timeStart"/>
             </item>
            </layout>
@@ -60,9 +67,15 @@
              </widget>
             </item>
             <item>
+             <widget class="QDateEdit" name="dateEnd"/>
+            </item>
+            <item>
              <widget class="QTimeEdit" name="timeEnd"/>
             </item>
            </layout>
+          </item>
+          <item>
+           <layout class="QHBoxLayout" name="horizontalLayout_10"/>
           </item>
           <item>
            <widget class="QCalendarWidget" name="calendarWidget"/>
@@ -103,9 +116,23 @@
             <property name="enabled">
              <bool>true</bool>
             </property>
+            <property name="animated">
+             <bool>true</bool>
+            </property>
+            <property name="columnCount">
+             <number>2</number>
+            </property>
+            <attribute name="headerDefaultSectionSize">
+             <number>350</number>
+            </attribute>
             <column>
              <property name="text">
-              <string notr="true">1</string>
+              <string notr="true">Событие</string>
+             </property>
+            </column>
+            <column>
+             <property name="text">
+              <string>Время</string>
              </property>
             </column>
            </widget>
@@ -253,6 +280,113 @@
          </layout>
         </item>
        </layout>
+      </widget>
+      <widget class="QWidget" name="tab">
+       <attribute name="title">
+        <string>Настройки</string>
+       </attribute>
+       <widget class="QWidget" name="verticalLayoutWidget">
+        <property name="geometry">
+         <rect>
+          <x>10</x>
+          <y>10</y>
+          <width>431</width>
+          <height>181</height>
+         </rect>
+        </property>
+        <layout class="QVBoxLayout" name="verticalLayout_7">
+         <item>
+          <widget class="QLabel" name="label_3">
+           <property name="frameShape">
+            <enum>QFrame::NoFrame</enum>
+           </property>
+           <property name="text">
+            <string>Привязка Telegram (уведомелния о событиях будут приходить в Telegramm бота)</string>
+           </property>
+           <property name="alignment">
+            <set>Qt::AlignCenter</set>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="tgButton">
+           <property name="text">
+            <string>Связать с TG</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QLabel" name="label_4">
+           <property name="text">
+            <string>Интерфейс</string>
+           </property>
+           <property name="alignment">
+            <set>Qt::AlignCenter</set>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <layout class="QHBoxLayout" name="horizontalLayout_2">
+           <item>
+            <widget class="QLabel" name="label_8">
+             <property name="text">
+              <string>Размер шрифта</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QSpinBox" name="fontsize">
+             <property name="minimum">
+              <number>1</number>
+             </property>
+             <property name="value">
+              <number>8</number>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </item>
+         <item>
+          <layout class="QHBoxLayout" name="horizontalLayout_8">
+           <item>
+            <widget class="QLabel" name="label_9">
+             <property name="text">
+              <string>Тип шрифта</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QFontComboBox" name="fontBox"/>
+           </item>
+          </layout>
+         </item>
+         <item>
+          <layout class="QHBoxLayout" name="horizontalLayout_9">
+           <item>
+            <widget class="QPushButton" name="colorButton">
+             <property name="text">
+              <string>Изменить цвет событий</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QPushButton" name="reset_colorButton">
+             <property name="text">
+              <string>Сбросить</string>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </item>
+         <item>
+          <widget class="QPushButton" name="syncButton">
+           <property name="text">
+            <string>Синхронизировать</string>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </widget>
       </widget>
      </widget>
     </item>
