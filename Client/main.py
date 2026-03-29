@@ -104,7 +104,7 @@ class SimplePlanner(QMainWindow):
         self.last_alert_minute = -1
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.check_alerts)
-        self.timer.start(5000)
+        self.timer.start(60000)
 
         self.sync_timer = QTimer(self)
         self.sync_timer.timeout.connect(self.sync_all)
@@ -392,7 +392,7 @@ class SimplePlanner(QMainWindow):
 
     def open_telegram_dialog(self):
         code, ok = QInputDialog.getText(self, "Связывание Telegram",
-                                        "Напишите боту(@MaxPal_bot) '/start' и введите код, полученный  от него")
+                                        "Напишите боту(@MaxPal_bot) '/start' и введите код, полученный  от него. Предыдущие записи не будут привязаны(используйте редактировать чтобы пересоздать)")
         if ok and code:
             self.tgButton.setEnabled(False)
             self.tgButton.setText("Загрузка...")
@@ -420,27 +420,37 @@ class SimplePlanner(QMainWindow):
     # -------------------------------------------------------------------
 
     def check_alerts(self):
+        print('check')
         current_time = datetime.now().time()
-        current_date = datetime.today()
+        current_date = datetime.today().date()
 
         if self.last_alert_minute == current_time.minute:
             return
 
         self.last_alert_minute = current_time.minute
 
-        if current_date in self.events:
+        if current_date in self.events.keys():
             for event in self.events[current_date]:
-                name, _, start, end, _ = event
-                if start.hour == current_time.hour and start.minute == current_time.minute:
-                    self._send_windows_notification(name, start, end)
+                print(event)
+                name, date_start, date_end, time_start, time_end, _ = 0,0,0,0,0,0
+                if len(event) == 5:
+                    name, date_start, time_start, time_end, _ = event
+                    date_end = date_start
+                else:
+                    name, date_start, date_end, time_start, time_end, _ = event
+                date_start = datetime.combine(date_start, time_start)
+                date_end = datetime.combine(date_end, time_end)
+                if time_start.hour == current_time.hour and time_start.minute == current_time.minute:
+                    self._send_windows_notification(name, date_start, date_end)
 
-    def _send_windows_notification(self, title, time_s, time_e):
-        time_s_str = time_s.strftime("%H:%M")
-        time_e_str = time_e.strftime("%H:%M")
+    def _send_windows_notification(self, title, date_start, date_end):
+        print('notification')
+        time_s_str = date_start.strftime("%Y-%m-%d %H:%M")
+        time_e_str = date_start.strftime("%Y-%m-%d %H:%M")
         try:
             notification.notify(
                 title=f"Событие: {title}",
-                message=f"Запланировано событие на время: {time_s_str} - {time_e_str}",
+                message=f"Запланировано событие на время: \n{time_s_str} - {time_e_str}",
                 app_name="Минипланировщик",
                 timeout=10
             )
@@ -847,10 +857,17 @@ class SimplePlanner(QMainWindow):
         if item.parent():
             cat = item.parent().data(0, Qt.ItemDataRole.UserRole)
             t_data = item.data(0, Qt.ItemDataRole.UserRole)
-            server_id = t_data[3]
+            query_select = '''
+                SELECT server_id FROM tasks
+                WHERE name = ? AND description = ? AND category = ?
+            '''
+            params = (t_data[0], t_data[1], cat)
+            result = self._execute_query(query_select, params, fetch_all=True)
+            server_id = result[0][0] if result and result[0] else None
 
             query = '''DELETE FROM tasks WHERE name = ? AND description = ? AND category = ?'''
             params = (t_data[0], t_data[1], cat)
+            self._execute_query(query, params, commit=True)
             if server_id:
                 token = self._get_api_token()
                 if token:

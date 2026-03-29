@@ -361,9 +361,15 @@ async def cmd_tasks(message: types.Message):
         category = {}
         for task in tasks:
             if task.category in category:
-                category[task.category].append((task.name, task.description, task.is_completed))
+                if task.description:
+                    category[task.category].append((task.name, task.description, task.is_completed))
+                else:
+                    category[task.category].append((task.name, task.is_completed))
             else:
-                category[task.category] = [(task.name, task.description, task.is_completed)]
+                if task.description:
+                    category[task.category] = [(task.name, task.description, task.is_completed)]
+                else:
+                    category[task.category] = [(task.name, task.is_completed)]
         for cat in category:
             response.append(f"• {cat}")
             for task in category[cat]:
