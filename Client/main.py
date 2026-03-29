@@ -5,10 +5,7 @@ import sqlite3
 
 import requests
 from datetime import datetime
-import json
 from typing import Dict, List, Tuple
-from requests.exceptions import RequestException, HTTPError
-
 from plyer import notification
 
 from PyQt6 import uic
@@ -18,7 +15,6 @@ from PyQt6.QtWidgets import (
     QSystemTrayIcon, QStyle
 )
 from PyQt6.QtGui import QFont, QTextCharFormat, QColor, QAction, QIcon
-from win32comext.mapi.mapiutil import prTable
 
 # --- ГЛОБАЛЬНЫЕ КОНСТАНТЫ ---
 # SERVER_URL = "http://10.62.25.171:8000"
@@ -85,7 +81,7 @@ class SimplePlanner(QMainWindow):
                 QMessageBox.critical(self, "Ошибка", f"Не удалось загрузить интерфейс: {e}")
                 sys.exit(1)
 
-        self.setWindowTitle('Минипланировщик')
+        self.setWindowTitle('Секретарь')
 
         # --- Состояние данных ---
         self.events: Dict[datetime.date, List[Tuple[str, datetime.date, datetime.time, datetime.time, int]]] = {}
