@@ -84,8 +84,8 @@ class SimplePlanner(QMainWindow):
         self.setWindowTitle('Секретарь')
 
         # --- Состояние данных ---
-        self.events: Dict[datetime.date, List[Tuple[str, datetime.date, datetime.time, datetime.time, int]]] = {}
-        self.tasks: Dict[str, List[Tuple[str, str, int]]] = {cat: [] for cat in TASK_CATEGORIES}
+        self.events = {}
+        self.tasks = {cat: [] for cat in TASK_CATEGORIES}
         self.tg_enabled = False
         self.color = QColor('#FF7F50')
         self.past_color = QColor('#FF9F7C')
@@ -397,7 +397,6 @@ class SimplePlanner(QMainWindow):
             self.tgButton.setEnabled(False)
             self.tgButton.setText("Загрузка...")
 
-            # ЗАПУСК ЧЕРЕЗ WORKER (вместо threading)
             self._run_worker(
                 url=f"{SERVER_URL}/auth/link",
                 payload={"code": str(code)},
@@ -420,7 +419,6 @@ class SimplePlanner(QMainWindow):
     # -------------------------------------------------------------------
 
     def check_alerts(self):
-        print('check')
         current_time = datetime.now().time()
         current_date = datetime.today().date()
 
@@ -432,7 +430,7 @@ class SimplePlanner(QMainWindow):
         if current_date in self.events.keys():
             for event in self.events[current_date]:
                 print(event)
-                name, date_start, date_end, time_start, time_end, _ = 0,0,0,0,0,0
+                name, date_start, date_end, time_start, time_end, _ = 0, 0, 0, 0, 0, 0
                 if len(event) == 5:
                     name, date_start, time_start, time_end, _ = event
                     date_end = date_start
@@ -444,9 +442,8 @@ class SimplePlanner(QMainWindow):
                     self._send_windows_notification(name, date_start, date_end)
 
     def _send_windows_notification(self, title, date_start, date_end):
-        print('notification')
         time_s_str = date_start.strftime("%Y-%m-%d %H:%M")
-        time_e_str = date_start.strftime("%Y-%m-%d %H:%M")
+        time_e_str = date_end.strftime("%Y-%m-%d %H:%M")
         try:
             notification.notify(
                 title=f"Событие: {title}",
